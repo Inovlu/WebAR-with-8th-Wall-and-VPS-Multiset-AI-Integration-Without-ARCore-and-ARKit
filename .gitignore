@@ -1,0 +1,7 @@
+.env
+node_modules/
+dist/
+*.pem
+public/xr8/
+public/xrextras/
+public/landing-page/
