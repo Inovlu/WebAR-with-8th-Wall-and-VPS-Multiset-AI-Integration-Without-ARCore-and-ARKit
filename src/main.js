@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { XR8Promise } from '@8thwall/engine-binary';
 import {
   queryLocalization,
@@ -8,6 +7,126 @@ import {
   MULTI_IMAGE_ENABLED,
 } from './multiset-client.js';
 
+// Usamos el THREE que ya trae empaquetado A-Frame (expuesto en window.AFRAME.THREE)
+// en vez de importar el paquete "three" de npm aparte. Antes importábamos los
+// dos: A-Frame 1.8.0 carga su propia copia de Three.js (r184, según el log de
+// consola) y nuestro import de "three" (^0.185.1 en package.json) traía una
+// instancia SEPARADA — de ahí el warning "THREE.WARNING: Multiple instances of
+// Three.js being imported." No es solo cosmético: son dos registros de clases
+// distintos, así que un chequeo interno tipo "instanceof THREE.Vector3" contra
+// un objeto creado con la otra instancia falla en silencio. Reusar la de
+// A-Frame elimina el duplicado y además nos ahorra bajar Three.js dos veces al
+// bundle. index.html carga aframe.min.js síncrono en <head> (sin async/defer),
+// antes que este módulo (que es <script type="module">, deferred por
+// default), así que window.AFRAME ya está listo acá.
+const THREE = window.AFRAME.THREE;
+
+// ─── Consola visual en mobile (?debug=1) ───────────────────────────────────────
+// El inspector remoto de Chrome (chrome://inspect) no está andando para debuggear
+// en el celular, así que exponemos una consola en pantalla como alternativa:
+// eruda dibuja un botón flotante que abre un panel con console.log/error, red,
+// elementos, etc. Solo se carga si el link tiene "?debug=1" para no mostrársela
+// a usuarios reales de la experiencia AR.
+if (new URLSearchParams(location.search).has('debug')) {
+  setupDebugConsole();
+}
+
+// El botón de copiar de eruda solo copia UNA línea a la vez, y encima exige
+// tocarla primero para "seleccionarla" (si no, queda gris/deshabilitado — no
+// es un bug, es así de fábrica). Para debuggear en el celular sirve mucho más
+// poder copiar TODO el historial de un toque, así que interceptamos
+// console.* nosotros mismos en un buffer propio y agregamos un botón flotante
+// aparte que copia ese buffer completo.
+function setupDebugConsole() {
+  const logBuffer = [];
+  const MAX_LOG_LINES = 1000; // evita crecer sin límite en una sesión larga
+
+  ['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      original(...args);
+      const line = args
+        .map((a) => (typeof a === 'string' ? a : safeStringify(a)))
+        .join(' ');
+      logBuffer.push(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${line}`);
+      if (logBuffer.length > MAX_LOG_LINES) logBuffer.shift();
+    };
+  });
+
+  window.addEventListener('error', (e) => {
+    logBuffer.push(`[${new Date().toISOString()}] [UNCAUGHT] ${e.message} (${e.filename}:${e.lineno})`);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    logBuffer.push(`[${new Date().toISOString()}] [UNHANDLED-REJECTION] ${safeStringify(e.reason)}`);
+  });
+
+  import('eruda').then(({ default: eruda }) => {
+    eruda.init();
+
+    const btnCopyConsole = document.createElement('button');
+    btnCopyConsole.textContent = '📋 Copiar consola';
+    Object.assign(btnCopyConsole.style, {
+      position: 'fixed',
+      bottom: '70px',
+      right: '16px',
+      zIndex: 2147483647, // por encima del panel de eruda
+      width: 'auto',
+      padding: '8px 12px',
+      fontSize: '12px',
+      fontWeight: '600',
+      borderRadius: '8px',
+      background: 'rgba(0,0,0,0.75)',
+      color: '#fff',
+      border: '1px solid rgba(255,255,255,0.3)',
+    });
+    btnCopyConsole.addEventListener('click', async () => {
+      const text = logBuffer.join('\n') || '(consola vacía)';
+      const ok = await copyToClipboard(text);
+      const original = btnCopyConsole.textContent;
+      btnCopyConsole.textContent = ok ? '✅ Copiado' : '❌ Error al copiar';
+      setTimeout(() => { btnCopyConsole.textContent = original; }, 1500);
+    });
+    document.body.appendChild(btnCopyConsole);
+  });
+}
+
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+// navigator.clipboard requiere contexto seguro (https/ngrok) y a veces falla
+// en mobile aunque el sitio sea https (permiso denegado, WebView, etc.) — si
+// falla, caemos a document.execCommand("copy") con un textarea oculto, que es
+// más tolerante en navegadores mobile viejos.
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // sigue al fallback
+    }
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 // ─── UI refs ──────────────────────────────────────────────────────────────────
 const landing         = document.getElementById('landing');
 const btnStartAR      = document.getElementById('btn-start-ar');
@@ -16,10 +135,12 @@ const sceneEl         = document.getElementById('ar-scene');
 const cubeEl          = document.getElementById('ar-cube');
 const hud             = document.getElementById('hud');
 const btnLocalize     = document.getElementById('btn-localize');
+const btnToggleBg     = document.getElementById('btn-toggle-bg');
 const confidenceBadge = document.getElementById('confidence-badge');
 const fallbackViewer  = document.getElementById('fallback-viewer');
 const fallbackCanvas  = document.getElementById('fallback-canvas');
 const btnFallbackBack = document.getElementById('btn-fallback-back');
+const btnDebugToggleView = document.getElementById('btn-debug-toggle-view');
 
 let xr8Instance = null; // seteado apenas XR8Promise resuelve, lo necesita triggerFallback()
 
@@ -36,36 +157,30 @@ function showError(prefix, error) {
   btnStartAR.disabled = false;
   btnStartAR.textContent = 'Iniciar AR';
   landing.style.display = 'flex';
+  btnDebugToggleView.style.display = 'none';
 }
 
-// ─── Cierre de Fase 1: detección reactiva de GPU insuficiente ─────────────────
-// No hay forma confiable de saber ANTES de arrancar la cámara si el tracking
-// va a ser estable — la falla (avalancha de errores de WebGL durante el SLAM)
-// recién aparece una vez que el motor ya está procesando frames. Confirmado en
-// el Moto E40 con dos proyectos distintos que comparten el mismo motor
-// (@8thwall/engine-binary): el error es del motor/GPU, no de nuestro código.
-//
-// Detección: xr-slam.js loguea "WebGL: too many errors, no more errors will
-// be reported" por console.error cuando el contexto WebGL entra en ese estado.
-// El interceptor de console.error vive en index.html, como <script> inline
-// SIN "async"/"defer" — tiene que instalarse antes que xr.js, porque
-// xr-slam.js corre sobre un runtime Emscripten (WASM) que cachea console.error
-// en una variable interna apenas inicializa ese chunk. Si el parche se instala
-// después (como lo hacíamos antes, desde este módulo, que carga después del
-// <script async> de xr.js), el chunk ya se quedó con la referencia original y
-// el interceptor nunca ve nada — exactamente el bug que reportó el usuario
-// ("el sistema nunca me frenó la cámara").
-//
-// Ese script inline guarda el motivo en window.__xr8FallbackReason y dispara
-// el evento "xr8-fallback-needed". Acá cubrimos las dos puntas de la carrera:
-// si ya se disparó antes de que este módulo cargue, actuamos al toque; si no,
-// quedamos escuchando el evento.
+// ─── Fallback automático por GPU/driver insuficiente: DESACTIVADO ─────────────
+// Hubo un intento de detectar reactivamente un SLAM roto (avalancha de errores
+// de WebGL, confirmado en el Moto E40 y un Redmi Note 13 Pro con driver ARM
+// beta) mandando automáticamente al visor 3D si el tracking nunca llegaba a
+// 'NORMAL' dentro de un timeout. Se sacó (2026-07-22): un timeout por tiempo
+// (incluso combinado con un mínimo de movimiento acumulado) sigue dando falsos
+// positivos — hay dispositivos SANOS que simplemente tardan más en estabilizar
+// el SLAM visual-inercial, y no hay forma confiable de distinguir "va a tardar
+// más" de "está roto y nunca va a llegar" sin arriesgarse a expulsar a un
+// usuario legítimo a mitad de sesión. El botón de testeo
+// (#btn-debug-toggle-view) sigue disponible para comparar a mano cámara/AR vs.
+// visor 3D cuando haga falta diagnosticar un dispositivo puntual.
 let fallbackTriggered = false;
 
-if (window.__xr8FallbackReason) {
-  triggerFallback(window.__xr8FallbackReason);
-}
-window.addEventListener('xr8-fallback-needed', (e) => triggerFallback(e.detail));
+// Se pone en true la primera vez que reality.trackingStatus === 'NORMAL' en
+// CUALQUIER momento de la sesión. Habilita el botón "Localizar" (ver
+// btnLocalize más abajo: deshabilitado hasta este punto, para no anclar el
+// origen del mundo contra una pose de tracking todavía inestable — eso es lo
+// que causaba que el cubo "saltara" apenas el SLAM pasaba de INITIALIZING a
+// NORMAL).
+let everReachedNormalTracking = false;
 
 function triggerFallback(reason) {
   if (fallbackTriggered) return;
@@ -87,6 +202,80 @@ function triggerFallback(reason) {
   });
 
   landing.style.display = 'none';
+  showFallbackView();
+
+  // Este fallback es DEFINITIVO para la sesión (cámara soltada, XR8 pausado)
+  // — a diferencia del toggle de testeo, acá no hay forma confiable de
+  // volver a la vista de cámara sin recargar (ver btnFallbackBack). Ocultamos
+  // el botón de test para no ofrecer una vuelta que no puede funcionar bien.
+  btnDebugToggleView.style.display = 'none';
+}
+
+// Vista 3D simple del mismo cubo, sin cámara ni tracking — un THREE.Scene
+// aparte, independiente de A-Frame/XR8. Gira sola para poder verse desde
+// todos los ángulos sin necesitar controles táctiles.
+//
+// Creada UNA sola vez (lazy, en ensureFallbackScene): el toggle de testeo
+// puede mostrar/ocultar este visor muchas veces en la misma sesión, y cada
+// "new THREE.WebGLRenderer(...)" abre un contexto WebGL nuevo sobre el mismo
+// <canvas> — Android/Chrome tiene un límite bajo de contextos WebGL vivos
+// simultáneos, así que recrearlo en cada toggle terminaría agotándolo. Lo que
+// SÍ se detiene/reinicia en cada toggle es el loop de animación (rAF), vía
+// startFallbackPreview()/stopFallbackPreview().
+let fallbackRenderer = null;
+let fallbackScene = null;
+let fallbackCamera = null;
+let fallbackCube = null;
+let fallbackAnimating = false;
+
+function ensureFallbackScene() {
+  if (fallbackRenderer) return;
+
+  fallbackRenderer = new THREE.WebGLRenderer({ canvas: fallbackCanvas, antialias: true });
+  fallbackRenderer.setPixelRatio(window.devicePixelRatio);
+  fallbackRenderer.setSize(fallbackCanvas.clientWidth, fallbackCanvas.clientHeight);
+
+  fallbackScene = new THREE.Scene();
+  fallbackCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+  fallbackCamera.position.set(1.2, 1, 1.8);
+  fallbackCamera.lookAt(0, 0, 0);
+
+  fallbackScene.add(new THREE.AmbientLight(0xffffff, 1));
+  const light = new THREE.DirectionalLight(0xffffff, 0.6);
+  light.position.set(3, 5, 2);
+  fallbackScene.add(light);
+
+  fallbackCube = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x6366f1, roughness: 0.4 })
+  );
+  fallbackScene.add(fallbackCube);
+}
+
+function startFallbackPreview() {
+  ensureFallbackScene();
+  if (fallbackAnimating) return; // ya hay un loop corriendo, no arrancar otro en paralelo
+  fallbackAnimating = true;
+
+  function animate() {
+    if (!fallbackAnimating) return; // corta el loop al ocultar el fallback
+    fallbackCube.rotation.y += 0.012;
+    fallbackCube.rotation.x += 0.004;
+    fallbackRenderer.render(fallbackScene, fallbackCamera);
+    requestAnimationFrame(animate);
+  }
+  animate();
+}
+
+function stopFallbackPreview() {
+  fallbackAnimating = false;
+}
+
+// ─── Mostrar/ocultar el visor 3D de respaldo ───────────────────────────────
+// Compartido entre el fallback automático (triggerFallback, definitivo) y el
+// botón de testeo (reversible) — ambos necesitan la misma coreografía de UI,
+// solo difieren en si además pausan XR8/sueltan la cámara.
+function showFallbackView() {
   sceneEl.style.display = 'none';
   hud.style.display = 'none';
   confidenceBadge.style.display = 'none';
@@ -95,44 +284,40 @@ function triggerFallback(reason) {
   startFallbackPreview();
 }
 
-// Vista 3D simple del mismo cubo, sin cámara ni tracking — un THREE.Scene
-// aparte, independiente de A-Frame/XR8. Gira sola para poder verse desde
-// todos los ángulos sin necesitar controles táctiles.
-function startFallbackPreview() {
-  const renderer = new THREE.WebGLRenderer({ canvas: fallbackCanvas, antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(fallbackCanvas.clientWidth, fallbackCanvas.clientHeight);
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.set(1.2, 1, 1.8);
-  camera.lookAt(0, 0, 0);
-
-  scene.add(new THREE.AmbientLight(0xffffff, 1));
-  const light = new THREE.DirectionalLight(0xffffff, 0.6);
-  light.position.set(3, 5, 2);
-  scene.add(light);
-
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x6366f1, roughness: 0.4 })
-  );
-  scene.add(cube);
-
-  function animate() {
-    if (fallbackViewer.style.display === 'none') return; // corta el loop si se sale del fallback
-    cube.rotation.y += 0.012;
-    cube.rotation.x += 0.004;
-    renderer.render(scene, camera);
-    requestAnimationFrame(animate);
-  }
-  animate();
+function showARView() {
+  fallbackViewer.style.display = 'none';
+  stopFallbackPreview();
+  sceneEl.style.display = '';
+  hud.style.display = 'flex';
 }
 
 btnFallbackBack.addEventListener('click', () => {
   // Recargar es lo más simple y confiable acá: XR8 no está pensado para
   // reiniciar una sesión ya pausada de forma prolija.
   window.location.reload();
+});
+
+// ─── Botón de TESTEO: alternar cámara/AR ↔ visor 3D a mano ─────────────────
+// A diferencia del fallback automático de arriba, esto NO pausa XR8 ni suelta
+// la cámara — el motor sigue corriendo en segundo plano aunque se esté
+// mostrando el visor 3D. Sirve para comparar a ojo, en un dispositivo donde
+// el cubo no se proyecta, si el problema es de renderizado (nunca aparece
+// nada nuevo, ni en este visor de prueba) o de posicionamiento (el visor 3D
+// si muestra el cubo, solo que la pose real lo deja fuera de cámara).
+let inDebugFallbackView = false;
+
+btnDebugToggleView.addEventListener('click', () => {
+  if (fallbackTriggered) return; // ya no hay cámara viva a la que volver
+
+  inDebugFallbackView = !inDebugFallbackView;
+
+  if (inDebugFallbackView) {
+    showFallbackView();
+    btnDebugToggleView.textContent = '📷 Ver cámara/AR';
+  } else {
+    showARView();
+    btnDebugToggleView.textContent = '🧪 Ver visor 3D';
+  }
 });
 
 // ─── Fix: forzar la cámara trasera principal (no macro) ───────────────────────
@@ -185,9 +370,22 @@ async function forceMainBackCamera(videoEl) {
   track.stop();
   await new Promise((resolve) => setTimeout(resolve, 300));
 
+  // "ideal" (no "exact"/min): pedimos la mejor calidad posible sin que la
+  // request falle si el sensor no llega a 1920x1080/30fps — el browser cae al
+  // máximo que sí soporte. SIN esto, Chrome/Android arrancaba el stream de
+  // reemplazo en una resolución baja por default (algo como 640x480) en vez
+  // de la que el sensor real puede dar — confirmado como la causa de que la
+  // cámara se viera de calidad mucho peor que la app nativa de cámara del
+  // mismo Redmi Note 13 (que sí anda en 1920x1080).
+  const idealVideoConstraints = {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30 },
+  };
+
   try {
     const newStream = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: mainCamera.deviceId } },
+      video: { deviceId: { exact: mainCamera.deviceId }, ...idealVideoConstraints },
     });
     videoEl.srcObject = newStream;
     console.log('✅ Cámara cambiada a la principal:', mainCamera.label);
@@ -198,7 +396,7 @@ async function forceMainBackCamera(videoEl) {
     console.warn('No se pudo abrir la cámara principal, reabriendo la original:', err);
     try {
       const fallbackStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: currentId } },
+        video: { deviceId: { exact: currentId }, ...idealVideoConstraints },
       });
       videoEl.srcObject = fallbackStream;
       setStatus(`No se pudo cambiar de cámara (${err.name}). Se mantiene: ${track.label}`);
@@ -253,7 +451,14 @@ function diagnosticsPipelineModule() {
 
     onStart: () => {
       console.log('✅ Pipeline XR8 iniciado (A-Frame + xrweb).');
-      setStatus('Motor iniciado. Tocá "Localizar" para corregir con MultiSet.');
+      // "Localizar" arranca deshabilitado: anclar el origen del mundo con
+      // updateCameraProjectionMatrix() mientras el SLAM todavía está
+      // LIMITED/INITIALIZING es lo que causaba el salto del cubo apenas el
+      // tracking nativo pasaba a NORMAL (ver comentario largo junto a
+      // everReachedNormalTracking más arriba) — se rehabilita solo, más abajo
+      // en onUpdate, la primera vez que trackingStatus === 'NORMAL'.
+      btnLocalize.disabled = true;
+      setStatus('Motor iniciado. Mové el teléfono lentamente para estabilizar el tracking...');
       hud.style.display = 'flex';
     },
 
@@ -292,6 +497,17 @@ function diagnosticsPipelineModule() {
       return ({ processCpuResult }) => {
         const reality = processCpuResult?.reality;
         if (!reality) return;
+
+        if (reality.trackingStatus === 'NORMAL' && !everReachedNormalTracking) {
+          everReachedNormalTracking = true;
+          // Recién ahora es seguro anclar el origen del mundo contra una
+          // pose de tracking estable — habilitamos "Localizar" (no lo
+          // tocamos si ya está en medio de una localización/chequeo GPS).
+          if (!localizing && !checkingLocation) {
+            btnLocalize.disabled = false;
+            setStatus('Tracking estable. Tocá "Localizar" para corregir con MultiSet.');
+          }
+        }
 
         // Guardado CADA frame (no solo cada 30) — esto es lo que usa
         // captureMultiImageFrames() para armar "imageN_data" en el momento
@@ -408,6 +624,25 @@ function stopBackgroundLocalization() {
     bgLocalizationTimer = null;
   }
 }
+
+// true si el usuario pausó la relocalización de fondo a mano (botón del HUD).
+// Se chequea tanto al pausar/reanudar como en el punto donde
+// captureAndLocalize() arranca el timer por primera vez — si el usuario ya
+// pausó antes de que llegara la primera localización exitosa, no queremos
+// que ese primer éxito reactive el timer por encima de su elección.
+let bgLocalizationPaused = false;
+
+btnToggleBg.addEventListener('click', () => {
+  bgLocalizationPaused = !bgLocalizationPaused;
+
+  if (bgLocalizationPaused) {
+    stopBackgroundLocalization();
+    btnToggleBg.textContent = '▶️ Reanudar auto-localización';
+  } else {
+    btnToggleBg.textContent = '⏸ Pausar auto-localización';
+    if (hasLocalizedOnce) startBackgroundLocalization();
+  }
+});
 
 // ─── Umbral de confianza ────────────────────────────────────────────────────
 // Otra técnica confirmada en el bundle del SDK oficial: confidenceCheck +
@@ -572,6 +807,10 @@ let checkingLocation = false;
 
 btnLocalize.addEventListener('click', () => {
   if (localizing || checkingLocation) return;
+  // Defensivo: el botón ya queda disabled hasta everReachedNormalTracking
+  // (ver diagnosticsPipelineModule().onStart/onUpdate), esto es solo para no
+  // confiar ciegamente en el atributo DOM si algo lo pisara desde afuera.
+  if (!everReachedNormalTracking) return;
   checkProximityAndRequestLocalization();
 });
 
@@ -746,6 +985,19 @@ async function captureAndLocalize() {
     const origin = { x: pose.position.x, y: pose.position.y, z: pose.position.z };
     const facing = { w: pose.rotation.w, x: pose.rotation.x, y: pose.rotation.y, z: pose.rotation.z };
 
+    // Log dedicado y en línea plana (no objeto anidado) a propósito: esto es
+    // lo que hay que comparar entre dos taps de "Localizar" hechos desde
+    // posiciones físicas distintas para diagnosticar un salto/teletransporte
+    // del cubo — el mensaje de más abajo ("MultiSet reconoció el mapa") solo
+    // mostraba el % de confianza a simple vista, con la pose completa
+    // escondida adentro de un objeto que en la consola visual (eruda) o en el
+    // texto copiado quedaba menos fácil de leer/diffear de un vistazo.
+    console.log(
+      `📌 Corrección aplicada a 8th Wall — origin: x=${origin.x.toFixed(4)}, y=${origin.y.toFixed(4)}, z=${origin.z.toFixed(4)} `
+      + `| facing: w=${facing.w.toFixed(4)}, x=${facing.x.toFixed(4)}, y=${facing.y.toFixed(4)}, z=${facing.z.toFixed(4)} `
+      + `| confianza=${confidencePct}%`
+    );
+
     // Suavizado en vez de aplicar directo — ver applyPose()/CORRECTION_SMOOTHING_MS
     // arriba. En la primera localización, applyPose() detecta que no hay pose
     // previa aplicada y hace un salto directo igual (no hay nada de qué
@@ -765,7 +1017,7 @@ async function captureAndLocalize() {
     // periódica — replicando startBackgroundLocalization() del SDK oficial.
     if (!hasLocalizedOnce) {
       hasLocalizedOnce = true;
-      startBackgroundLocalization();
+      if (!bgLocalizationPaused) startBackgroundLocalization();
     }
 
     // Confirmación visible de que MultiSet reconoció el mapa que importaste
@@ -863,6 +1115,7 @@ XR8Promise.then((XR8) => {
     try {
       sceneEl.emit('runreality');
       landing.style.display = 'none';
+      btnDebugToggleView.style.display = 'block';
       setStatus('Cargando motor y cámara...');
     } catch (error) {
       showError('No se pudo iniciar XR8:', error);

@@ -270,19 +270,26 @@ function mockLocalization() {
 }
 
 // ─── Ubicación georeferenciada del mapa ────────────────────────────────────
-// GET /vps/map/{mapCode} devuelve metadata del mapa, incluyendo "location":
-// un GeoJSON Point con coordinates: [longitud, latitud, altitud] — el punto
-// donde se georeferenció el mapa desde el dashboard de MultiSet (doc oficial:
-// "Record WGS-84 latitude, longitude... enter the values in the project's
-// Geo Reference panel"). Esta es la fuente de verdad — no hay una
+// GET /vps/map/{mapCode} devuelve metadata del mapa, incluyendo la ubicación
+// donde se georeferenció (dashboard o POST /vps/map/{mapCode}/georeference,
+// ver scripts/georeference-map.mjs). Esta es la fuente de verdad — no hay una
 // convención de .env para esto en la doc de MultiSet.
 //
-// Fallback: si el mapa todavía no fue georeferenciado desde el dashboard
-// (location ausente — confirmado que es el caso actual del mapa en .env),
+// CORRECCIÓN (2026-07-22): asumíamos (por la doc de "Geo Reference panel",
+// que habla de un GeoJSON Point) que este campo venía como
+// "location.coordinates" = [longitud, latitud, altitud]. Confirmado contra
+// una respuesta real de la API después de correr georeference-map.mjs con
+// éxito (horizontalRmseMeters: 0.006): el campo real es "coordinates", un
+// objeto plano {latitude, longitude, altitude} — no location.coordinates. Con
+// el nombre viejo, el código nunca encontraba la ubicación aunque el mapa ya
+// estuviera georeferenciado del lado del servidor, y caía siempre al fallback
+// de abajo sin darse cuenta del error.
+//
+// Fallback: si el mapa todavía no fue georeferenciado (coordinates ausente),
 // usamos VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE como respaldo manual en vez de
 // dejar el chequeo de proximidad inútil. Es un parche local, no lo que dice
-// la doc — apenas georeferencies el mapa en el dashboard, este fallback deja
-// de usarse solo (la API empieza a devolver location).
+// la doc — apenas georeferencies el mapa, este fallback deja de usarse solo
+// (la API empieza a devolver coordinates).
 //
 // Se cachea: la ubicación de un mapa no cambia entre requests.
 let cachedMapLocation = null;
@@ -302,10 +309,10 @@ async function getMapLocation() {
   }
 
   const data = await response.json();
-  const coords = data?.location?.coordinates;
+  const coords = data?.coordinates;
 
-  if (coords && coords.length >= 2) {
-    cachedMapLocation = { lon: coords[0], lat: coords[1] };
+  if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
+    cachedMapLocation = { lat: coords.latitude, lon: coords.longitude };
     return cachedMapLocation;
   }
 

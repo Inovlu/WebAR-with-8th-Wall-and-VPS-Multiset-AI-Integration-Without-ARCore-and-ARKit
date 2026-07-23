@@ -48,14 +48,15 @@ if (!CLIENT_ID || !CLIENT_SECRET || !MAP_CODE) {
   process.exit(1);
 }
 
-// DESHABILITADO: probamos esto y la API devuelve 403 "Insufficient scope
-// permissions for this endpoint" con las credenciales actuales — el
-// clientId no tiene habilitado el scope de georeferencia (no es un problema
-// de los control points ni del código). Hay que conseguir credenciales con
-// ese scope (rol Admin/Editor en developer.multiset.ai, o pedirlo a soporte
-// de MultiSet) antes de volver a intentar. Poné esto en false cuando lo
-// confirmes para volver a habilitar el script.
-const GEOREFERENCE_SCOPE_ENABLED = false;
+// Probamos esto en su momento y la API devolvía 403 "Insufficient scope
+// permissions for this endpoint" — el clientId no tenía habilitado el scope
+// de georeferencia (no era un problema de los control points ni del código).
+// CONFIRMADO 2026-07-22: ya no pasa — corrida real contra la API, respondió
+// 200 ("Map geo-referenced successfully", horizontalRmseMeters: 0.006), o
+// sea que las credenciales actuales ya tienen el scope habilitado. Se deja
+// esta bandera como kill-switch manual por si vuelve a aparecer el 403 en el
+// futuro (ej. credenciales rotadas) — no hace falta tocarla para uso normal.
+const GEOREFERENCE_SCOPE_ENABLED = true;
 if (!GEOREFERENCE_SCOPE_ENABLED) {
   console.error(
     '[georeference-map] Script deshabilitado: las credenciales actuales no tienen scope para /vps/map/{mapCode}/georeference (403 insufficient_scope).\n'

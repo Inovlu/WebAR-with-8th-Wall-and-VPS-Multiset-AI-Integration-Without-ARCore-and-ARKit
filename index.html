@@ -72,12 +72,20 @@
       position: fixed;
       bottom: 0; left: 0; right: 0;
       padding: 24px;
-      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    #btn-localize, #btn-toggle-bg {
+      width: 220px;
     }
     #btn-localize {
       background: #fff;
       color: #111;
-      width: 220px;
+    }
+    #btn-toggle-bg {
+      background: rgba(255,255,255,0.12);
+      color: #fff;
     }
 
     /* ── Texto de estado durante AR ── */
@@ -105,6 +113,22 @@
       border-radius: 8px;
       font-size: 13px;
       font-weight: 700;
+    }
+
+    /* ── Botón de testeo: alternar cámara/AR ↔ visor 3D ── */
+    #btn-debug-toggle-view {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 50;
+      width: auto;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
     }
 
     /* ── Ocultar el botón nativo "Enter VR" de A-Frame ──
@@ -224,10 +248,26 @@
   <!-- Se prende solo cuando MultiSet devuelve poseFound:true — confirmación visible de que reconoció el mapa -->
   <div id="confidence-badge"></div>
 
-  <!-- HUD durante AR: localización manual, no automática cada N segundos (gasta requests) -->
+  <!-- HUD durante AR: localización manual + pausa de la relocalización automática de fondo (cada N segundos) -->
   <div id="hud">
     <button id="btn-localize">📍 Localizar</button>
+    <button id="btn-toggle-bg">⏸ Pausar auto-localización</button>
   </div>
+
+  <!--
+    Botón de TESTEO: alterna manualmente entre la vista de cámara/AR y el
+    visor 3D de respaldo, sin depender de que el fallback automático se
+    dispare. A diferencia de triggerFallback() (que pausa XR8 y suelta la
+    cámara para siempre, porque reanudar una sesión ya pausada no es
+    confiable — ver comentario junto a btnFallbackBack), este toggle NO
+    toca el motor XR8 ni la cámara: solo cambia qué contenedor está visible.
+    Así es instantáneo y reversible las veces que haga falta, útil para
+    comparar a ojo cómo se vería el cubo en el visor 3D vs. si aparece (o
+    no) en la vista de cámara real, sin tener que recargar la página entre
+    intento e intento. Se oculta solo si el fallback automático se dispara
+    de verdad (ahí sí no hay cámara viva a la que volver).
+  -->
+  <button id="btn-debug-toggle-view" style="display: none;">🧪 Ver visor 3D</button>
 
   <!--
     Fallback: se muestra por dos motivos distintos (ver triggerFallback() en
@@ -243,35 +283,6 @@
     <canvas id="fallback-canvas"></canvas>
     <button id="btn-fallback-back">Volver</button>
   </div>
-
-  <!--
-    Interceptor de console.error — tiene que ser lo PRIMERO que corre en la
-    página, antes que xr.js. Motivo: xr-slam.js corre sobre un runtime
-    Emscripten (WASM) que cachea console.error en una variable interna apenas
-    inicializa ese chunk — si el parche se instala después (ej. desde
-    src/main.js, un <script type="module"> que es "deferred" y puede correr
-    después de que el <script async> de xr.js ya arrancó), ese chunk se queda
-    para siempre con la referencia original y nuestro interceptor no ve nada.
-    Guardamos el motivo en window y avisamos por evento — src/main.js lo lee
-    (por si ya se disparó antes de que el módulo cargue) y también escucha el
-    evento (por si se dispara después). Ver más contexto en src/main.js.
-  -->
-  <script>
-    window.__xr8FallbackReason = null;
-    (function () {
-      var originalConsoleError = console.error;
-      console.error = function () {
-        originalConsoleError.apply(console, arguments);
-        for (var i = 0; i < arguments.length; i++) {
-          if (typeof arguments[i] === 'string' && arguments[i].indexOf('too many errors') !== -1) {
-            window.__xr8FallbackReason = 'WebGL: too many errors durante el procesamiento SLAM';
-            window.dispatchEvent(new CustomEvent('xr8-fallback-needed', { detail: window.__xr8FallbackReason }));
-            break;
-          }
-        }
-      };
-    })();
-  </script>
 
   <!--
     Motor 8th Wall: script clásico (no ESM) que setea window.XR8 y dispara
