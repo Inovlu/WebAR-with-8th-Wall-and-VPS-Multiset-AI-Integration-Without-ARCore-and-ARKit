@@ -6,6 +6,7 @@ import {
   MOCK_ENABLED,
   MULTI_IMAGE_ENABLED,
 } from './multiset-client.js';
+import { PoseFilter } from './pose-filter.js';
 
 // Usamos el THREE que ya trae empaquetado A-Frame (expuesto en window.AFRAME.THREE)
 // en vez de importar el paquete "three" de npm aparte. Antes importábamos los
@@ -132,7 +133,7 @@ const landing         = document.getElementById('landing');
 const btnStartAR      = document.getElementById('btn-start-ar');
 const statusText      = document.getElementById('status-text');
 const sceneEl         = document.getElementById('ar-scene');
-const cubeEl          = document.getElementById('ar-cube');
+const mapAnchorEl     = document.getElementById('map-anchor');
 const hud             = document.getElementById('hud');
 const btnLocalize     = document.getElementById('btn-localize');
 const btnToggleBg     = document.getElementById('btn-toggle-bg');
@@ -196,7 +197,7 @@ function triggerFallback(reason) {
     console.warn('No se pudo pausar XR8:', err);
   }
   stopBackgroundLocalization();
-  cancelSmoothing();
+  stopPoseFilterLoop();
   document.querySelectorAll('video').forEach((video) => {
     video.srcObject?.getTracks().forEach((track) => track.stop());
   });
@@ -451,12 +452,13 @@ function diagnosticsPipelineModule() {
 
     onStart: () => {
       console.log('✅ Pipeline XR8 iniciado (A-Frame + xrweb).');
-      // "Localizar" arranca deshabilitado: anclar el origen del mundo con
-      // updateCameraProjectionMatrix() mientras el SLAM todavía está
-      // LIMITED/INITIALIZING es lo que causaba el salto del cubo apenas el
-      // tracking nativo pasaba a NORMAL (ver comentario largo junto a
-      // everReachedNormalTracking más arriba) — se rehabilita solo, más abajo
-      // en onUpdate, la primera vez que trackingStatus === 'NORMAL'.
+      // "Localizar" arranca deshabilitado: trackerFromCloudSpace() usa
+      // sceneEl.camera.matrixWorld (el tracker nativo) como referencia para
+      // anclar #map-anchor — localizar mientras el SLAM todavía está
+      // LIMITED/INITIALIZING metería esa pose inestable directo en el
+      // PoseFilter (ver comentario largo junto a everReachedNormalTracking
+      // más arriba). Se rehabilita solo, más abajo en onUpdate, la primera
+      // vez que trackingStatus === 'NORMAL'.
       btnLocalize.disabled = true;
       setStatus('Motor iniciado. Mové el teléfono lentamente para estabilizar el tracking...');
       hud.style.display = 'flex';
@@ -489,12 +491,18 @@ function diagnosticsPipelineModule() {
     // tenemos "viewer pose ausente" (eso es WebXR); el equivalente en 8th
     // Wall es reality.trackingStatus === 'LIMITED' sostenido. Mismo umbral
     // (60 frames) por no tener uno propio mejor fundamentado.
+    //
+    // Acá también leemos, cada frame, los intrínsecos reales de cámara
+    // (reality.intrinsics) y el buffer crudo de píxeles que entrega
+    // CameraPixelArray (processGpuResult.camerapixelarray) — ver el
+    // comentario grande junto a "cameraData" más abajo sobre por qué esto
+    // vive en onUpdate y no en un onProcessCpu propio.
     onUpdate: (() => {
       let frameCount = 0;
       let trackingLossFrames = 0;
       const TRACKING_LOSS_FRAMES_THRESHOLD = 60;
 
-      return ({ processCpuResult }) => {
+      return ({ frameStartResult, processGpuResult, processCpuResult }) => {
         const reality = processCpuResult?.reality;
         if (!reality) return;
 
@@ -510,13 +518,38 @@ function diagnosticsPipelineModule() {
         }
 
         // Guardado CADA frame (no solo cada 30) — esto es lo que usa
-        // captureMultiImageFrames() para armar "imageN_data" en el momento
-        // exacto de cada captura, no el log de diagnóstico de más abajo.
+        // captureImageFrame() para armar "imageN_data" en el momento exacto de
+        // cada captura, no el log de diagnóstico de más abajo.
         if (reality.position && reality.rotation) {
           latestRealityPose = {
             x: reality.position.x, y: reality.position.y, z: reality.position.z,
             qx: reality.rotation.x, qy: reality.rotation.y, qz: reality.rotation.z, qw: reality.rotation.w,
           };
+        }
+
+        // Snapshot del frame de cámara crudo (píxeles + intrínsecos reales)
+        // para captureImageFrame(). Ambos requieren que CameraPixelArray haya
+        // corrido este frame (se registra en XR8Promise.then() más abajo,
+        // como XR8.CameraPixelArray.pipelineModule({maxDimension:1280})) — si
+        // todavía no tickeó ninguna vez, camerapixelarray es undefined acá y
+        // simplemente no actualizamos cameraData, dejando el valor anterior.
+        const camerapixelarray = processGpuResult?.camerapixelarray;
+        if (reality.intrinsics && camerapixelarray?.pixels) {
+          // OJO (fix 2026-07-24): los intrínsecos hay que calcularlos contra
+          // el tamaño REAL del buffer que vamos a mandar (camerapixelarray.
+          // cols/rows) y NO contra frameStartResult.textureWidth/Height (el
+          // tamaño de la textura GL nativa, antes de cualquier downsample).
+          // reality.intrinsics es una matriz de proyección normalizada
+          // (independiente de resolución) — fx/fy/px/py en PÍXELES solo
+          // salen bien si se escalan contra el ancho/alto de la imagen que
+          // efectivamente le llega a MultiSet. Con "maxDimension:1280" activo,
+          // cols/rows (post-downsample) puede ser bien distinto de
+          // textureWidth/Height (nativo) — antes esto pasaba desapercibido
+          // porque sin downsample ambos coincidían casi siempre.
+          cameraData.intrinsics = getIntrinsicsFromReality(reality.intrinsics, camerapixelarray.cols, camerapixelarray.rows);
+          cameraData.width = camerapixelarray.cols;
+          cameraData.height = camerapixelarray.rows;
+          cameraData.buffer = camerapixelarray.pixels;
         }
 
         frameCount++;
@@ -547,29 +580,113 @@ function diagnosticsPipelineModule() {
 // Guía directa del equipo de 8th Wall (respuesta oficial a una consulta sobre
 // integrar un VPS externo, ya usado antes por otro cliente): "Registrá un
 // módulo de pipeline de cámara. Agarrá un frame, mandalo a tu backend, y si
-// se detecta la posición, actualizá el tracking con
-// updateCameraProjectionMatrix()." Ciclo de vida documentado
+// se detecta la posición, actualizá el tracking." Ciclo de vida documentado
 // (8thwall.org/docs/api/engine/camerapipelinemodule):
 //   onBeforeRun → onCameraStatusChange → onStart → onAttach
 //     → onProcessGpu → onProcessCpu → onUpdate → onRender
 // onProcessCpu es el punto documentado para "leer resultados de
-// procesamiento y devolver datos utilizables" — por eso la captura de frame
-// vive ahí, no en onUpdate/onRender. Antes esto corría directo desde un click
-// handler, por fuera de cualquier módulo de pipeline — no seguía el patrón
-// documentado.
+// procesamiento y devolver datos utilizables" — sería el lugar canónico para
+// leer processGpuResult.camerapixelarray. PERO ya confirmamos en este
+// proyecto, con xrweb (A-Frame), que un onProcessCpu propio no dispara de
+// forma confiable (0 requests reales llegando a MultiSet cuando se probó
+// antes con la captura vía CanvasScreenshot). Por eso el snapshot del frame
+// crudo (cameraData, más abajo) se lee en onUpdate en vez de onProcessCpu —
+// ver diagnosticsPipelineModule() más arriba: ESE onUpdate sí dispara
+// confiable (es lo que ya sostiene el log de reality.trackingStatus), y
+// según el ciclo de vida documentado processGpuResult (con
+// camerapixelarray ya poblado por XR8.CameraPixelArray, que corre ANTES en
+// la misma fase onProcessGpu) sigue disponible ahí, no solo en onProcessCpu.
 //
-// CORRECCIÓN: la indirección anterior (un flag prendido por el botón,
-// revisado cada frame desde un módulo de pipeline con onProcessCpu) se sacó
-// porque en la práctica ese onProcessCpu no está disparando de forma
-// confiable con xrweb (A-Frame) — resultado: 0 requests reales llegando a
-// MultiSet, confirmado desde el dashboard. Comparado contra @multisetai/vps
-// (SDK oficial, WebXR puro, confirmado funcionando): ahí el botón
-// "Localizar" llama directo `await adapter.localizeFrame()` en el mismo
-// click handler, sin ninguna indirección por frame. Hacemos lo mismo:
-// captureAndLocalize() se llama directo desde el tap, ya que
-// XR8.CanvasScreenshot.takeScreenshot() no necesita correr específicamente
-// dentro de onProcessCpu — puede leerse el frame actual en cualquier momento.
+// El disparo real de una localización (captureAndLocalize) sigue sin vivir
+// dentro de ningún hook del pipeline — se llama directo desde el tap del
+// botón, el timer de fondo, o la pérdida de tracking sostenida. Mismo patrón
+// que @multisetai/vps (SDK oficial, WebXR puro, confirmado funcionando): el
+// botón "Localizar" llama directo `await adapter.localizeFrame()` en el
+// mismo click handler, sin ninguna indirección por frame.
 let localizing = false;
+
+// Último frame de cámara crudo disponible, actualizado cada frame por
+// diagnosticsPipelineModule().onUpdate a partir de CameraPixelArray +
+// reality.intrinsics — reemplaza la captura anterior por
+// XR8.CanvasScreenshot.takeScreenshot() (un JPEG del <canvas> ya renderizado,
+// con el overlay 3D encima) e intrinsics.fx/fy estimados por FOV. Acá
+// "buffer" es el buffer RGBA (4 canales, 8 bits) que entrega
+// CameraPixelArray({maxDimension:1280}) — el sensor de la cámara a color, sin
+// nada dibujado encima — e "intrinsics" son los reales que reporta el SLAM
+// nativo de 8th Wall (no una aproximación). null hasta que CameraPixelArray
+// tickee por primera vez.
+const cameraData = {
+  width: 0,
+  height: 0,
+  buffer: null,
+  intrinsics: null,
+};
+
+// Fórmula EXACTA del módulo oficial de Immersal (immersal-module.js,
+// getIntrinsics / immersal/index.js) para derivar fx/fy/px/py a partir de la
+// matriz de proyección que el SLAM nativo ya calcula cuadro a cuadro
+// (reality.intrinsics) — reales, no una estimación por el FOV de la cámara
+// virtual de THREE.js como se hacía antes. m[5] es la escala focal en Y;
+// m[8]/m[9] el offset del punto principal en NDC (-1..1), reescalado a
+// píxeles de la textura. Asume fx=fy (píxeles cuadrados) porque
+// reality.intrinsics no expone un valor separado para X — mismo supuesto que
+// hace Immersal con esta misma fórmula.
+function getIntrinsicsFromReality(m, textureWidth, textureHeight) {
+  const fl = 0.5 * m[5] * textureHeight;
+  const px = 0.5 * (m[8] + 1.0) * textureWidth;
+  const py = 0.5 * (m[9] + 1.0) * textureHeight;
+  return { fx: fl, fy: fl, px, py };
+}
+
+// Encoding JPEG a color (2026-07-24, reemplaza el PNG en escala de grises de
+// src/png-worker.js) — copiado del SDK WebXR de referencia
+// (@multisetai/vps/dist/three/index.js, función ne()): un <canvas> 2D normal
+// (no OffscreenCanvas) en el hilo principal, mismo mecanismo que usa esa
+// función de referencia (que TAMPOCO usa worker para esto). Se descartó
+// mantenerlo en un worker: OffscreenCanvas.convertToBlob no tiene soporte
+// confiable en iOS Safari (requisito duro de este proyecto, ver comentarios
+// de arquitectura del proyecto), y canvas.toBlob del hilo principal es
+// universal — el costo de encoding en sí es bajo (una sola imagen JPEG de
+// hasta 1280px, no cada frame).
+//
+// Reusamos el mismo <canvas> entre capturas (igual que el patrón de
+// fallbackCanvas más arriba) en vez de crear uno nuevo por foto.
+const jpegCanvas = document.createElement('canvas');
+const jpegCtx = jpegCanvas.getContext('2d');
+const JPEG_QUALITY = 0.7; // mismo valor que usa el SDK de referencia
+
+function encodeJpegFrame(rgbaBuffer, width, height) {
+  jpegCanvas.width = width;
+  jpegCanvas.height = height;
+  // CameraPixelArray entrega Uint8Array; ImageData exige Uint8ClampedArray
+  // específicamente — el constructor de abajo copia a la vez que convierte
+  // de tipo, evitando además que putImageData lea un buffer que XR8 podría
+  // seguir escribiendo en frames futuros.
+  const imageData = new ImageData(new Uint8ClampedArray(rgbaBuffer), width, height);
+  jpegCtx.putImageData(imageData, 0, 0);
+  return new Promise((resolve, reject) => {
+    jpegCanvas.toBlob(
+      (blob) => (blob ? blob.arrayBuffer().then(resolve, reject) : reject(new Error('canvas.toBlob devolvió null'))),
+      'image/jpeg',
+      JPEG_QUALITY
+    );
+  });
+}
+
+// Snapshot + encoding de un frame para mandar a MultiSet. El snapshot de
+// cameraData.buffer y de latestRealityPose se toma ACÁ, de forma síncrona,
+// antes del primer await (new Uint8ClampedArray(rgbaBuffer) dentro de
+// encodeJpegFrame ya copia el buffer, así que lo que sigue escribiendo XR8 en
+// cameraData.buffer en frames futuros no afecta esta captura en curso).
+async function captureImageFrame() {
+  if (!cameraData.buffer || !cameraData.intrinsics) {
+    throw new Error('Todavía no hay un frame de cámara disponible (CameraPixelArray no tickeó aún).');
+  }
+  const { buffer, width, height, intrinsics } = cameraData;
+  const localPose = latestRealityPose;
+  const jpegBuffer = await encodeJpegFrame(buffer, width, height);
+  return { jpegBuffer, width, height, intrinsics, localPose };
+}
 
 // Última pose LOCAL de tracking (SLAM propio de XR8, no la respuesta de
 // MultiSet) — actualizada cada frame por diagnosticsPipelineModule().onUpdate.
@@ -661,90 +778,114 @@ const CONFIDENCE_THRESHOLD = Math.max(
   Math.min(Number(import.meta.env.VITE_MULTISET_CONFIDENCE_THRESHOLD) || CONFIDENCE_THRESHOLD_DEFAULT, CONFIDENCE_THRESHOLD_MAX)
 );
 
-// ─── Suavizado de correcciones ──────────────────────────────────────────────
-// updateCameraProjectionMatrix() no tiene versión "continua" ni parámetro de
-// transición documentado — es un salto duro (confirmado: "reset the scene's
-// display geometry and the camera's starting position"). Para que una
-// corrección periódica no se sienta como un teletransporte, interpolamos
-// nosotros: en vez de un solo llamado con la pose nueva, hacemos varios
-// llamados a lo largo de CORRECTION_SMOOTHING_MS, moviendo origin/facing
-// gradualmente desde la última pose aplicada hasta la nueva (lerp para
-// posición, slerp para rotación). Esto NO está documentado como patrón
-// oficial de 8th Wall — es nuestro — así que si en el dispositivo se ve algún
-// artefacto raro (parpadeo, doble imagen) durante la transición, es el primer
-// sospechoso a revisar/desactivar.
-//
-// 400ms de default: valor de partida razonable (ni instantáneo ni
-// perceptible como "deriva" mientras corrige) pero sin ninguna base empírica
-// todavía — ajustable por .env sin tocar código mientras se prueba en
-// dispositivo real.
-const CORRECTION_SMOOTHING_MS = Number(import.meta.env.VITE_CORRECTION_SMOOTHING_MS) || 400;
-
-let currentAppliedOrigin = null;
-let currentAppliedFacing = null;
-let smoothingAnimId = null;
-
-function cancelSmoothing() {
-  if (smoothingAnimId !== null) {
-    cancelAnimationFrame(smoothingAnimId);
-    smoothingAnimId = null;
-  }
+// ─── Anclaje del mapa (reemplaza updateCameraProjectionMatrix) ─────────────
+// Antes, cada corrección de MultiSet reseteaba el origen/orientación de TODO
+// el sistema de tracking de XR8 vía updateCameraProjectionMatrix({origin,
+// facing}) — un salto duro de todo el mundo, sin versión "continua" ni
+// transición documentada. Migramos al patrón que usa el módulo oficial de
+// Immersal (immersal-module.js: localize() + su "pointCloud"): el tracking
+// nativo de XR8 NUNCA se toca. En cambio, calculamos la transformación entre
+// la pose del tracker en el momento exacto de la captura (trackerSpace,
+// sceneEl.camera.matrixWorld) y la pose que devuelve el VPS relativa al
+// origen del mapa (cloudSpace) — esa transformación es la que hay que
+// aplicarle a #map-anchor para que el CONTENIDO quede alineado con el mundo
+// real, sin resetear nada del SLAM. El tracking sigue su curso normal entre
+// correcciones, así que ya no hay drift acumulado por perder el anclaje del
+// origen — solo el contenido se realinea.
+function trackerFromCloudSpace(position, rotation, trackerSpace) {
+  const cloudPosition = new THREE.Vector3(position.x, position.y, position.z);
+  const cloudRotation = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+  const cloudSpace = new THREE.Matrix4().compose(cloudPosition, cloudRotation, new THREE.Vector3(1, 1, 1));
+  return new THREE.Matrix4().multiplyMatrices(trackerSpace, cloudSpace.clone().invert());
 }
 
-// Aplica una pose a XR8, opcionalmente interpolando desde la última pose
-// aplicada. La primera vez (currentAppliedOrigin todavía null) siempre es un
-// salto directo — no hay desde dónde interpolar, y es el momento en que el
-// cubo pasa de invisible a visible, así que un salto ahí no se percibe como
-// "baile".
-function applyPose(origin, facing, { smooth = true } = {}) {
-  const cam = { pixelRectWidth: sceneEl.canvas.width, pixelRectHeight: sceneEl.canvas.height };
+// PoseFilter (ver src/pose-filter.js, puerto de Immersal): en vez de aplicar
+// cada corrección cruda, la acumulamos en un historial de 8 muestras que
+// promedia y descarta outliers — absorbe una localización puntual mala sin
+// que se note como salto.
+const poseFilter = new PoseFilter(THREE);
 
-  if (!smooth || !currentAppliedOrigin || !currentAppliedFacing) {
-    window.XR8.XrController.updateCameraProjectionMatrix({ cam, origin, facing });
-    currentAppliedOrigin = origin;
-    currentAppliedFacing = facing;
-    return;
-  }
+// Umbrales de "warp directo" — si la corrección filtrada implica moverse más
+// de 5m o girar más de 20° respecto de donde está el ancla ahora, asumimos
+// que es un realineamiento real (no ruido) y saltamos directo en vez de
+// interpolar durante segundos hacia el lugar correcto. Mismos valores que
+// usa Immersal (warpThresholdDistSq/warpThresholdCosAngle en
+// immersal-module.js) — no hay una base empírica propia todavía para este
+// mapa puntual, pero son un punto de partida razonable.
+const WARP_THRESHOLD_DIST_SQ = 5.0 * 5.0;
+const WARP_THRESHOLD_COS_ANGLE = Math.cos((20.0 * Math.PI) / 180.0);
+// Factor de suavizado exponencial por frame (no por tiempo fijo como antes)
+// — mismo valor default que usa Immersal en su propio onRender.
+const POSE_SMOOTHING = 0.025;
 
-  cancelSmoothing();
+let poseLoopRunning = false;
+let prevPoseLoopTime = performance.now();
 
-  const fromPos = new THREE.Vector3(currentAppliedOrigin.x, currentAppliedOrigin.y, currentAppliedOrigin.z);
-  const toPos = new THREE.Vector3(origin.x, origin.y, origin.z);
-  const fromQuat = new THREE.Quaternion(currentAppliedFacing.x, currentAppliedFacing.y, currentAppliedFacing.z, currentAppliedFacing.w);
-  const toQuat = new THREE.Quaternion(facing.x, facing.y, facing.z, facing.w);
+// Loop continuo (no un tween de una sola corrección): persigue
+// poseFilter.position/rotation cuadro a cuadro, igual que el onRender de
+// Immersal. Arranca una sola vez, con la primera localización exitosa (ver
+// applyLocalizationResult), y sigue corriendo indefinidamente — así una
+// corrección de fondo (relocalización periódica) también se suaviza, no
+// solo la del tap manual inicial.
+function poseFilterTick(now) {
+  if (!poseLoopRunning) return;
 
-  const startTime = performance.now();
+  if (poseFilter.sampleCount() > 0) {
+    const anchor = mapAnchorEl.object3D;
+    const distSq = anchor.position.distanceToSquared(poseFilter.position);
+    const cosAngle = poseFilter.rotation.dot(anchor.quaternion);
 
-  function step(now) {
-    const t = Math.min(1, (now - startTime) / CORRECTION_SMOOTHING_MS);
-    const eased = 1 - (1 - t) ** 3; // ease-out cúbico: se mueve rápido al principio, frena suave al llegar
-
-    const pos = fromPos.clone().lerp(toPos, eased);
-    const quat = fromQuat.clone().slerp(toQuat, eased);
-
-    window.XR8.XrController.updateCameraProjectionMatrix({
-      cam,
-      origin: { x: pos.x, y: pos.y, z: pos.z },
-      facing: { w: quat.w, x: quat.x, y: quat.y, z: quat.z },
-    });
-
-    if (t < 1) {
-      smoothingAnimId = requestAnimationFrame(step);
+    if (poseFilter.sampleCount() === 1 || distSq > WARP_THRESHOLD_DIST_SQ || cosAngle < WARP_THRESHOLD_COS_ANGLE) {
+      anchor.position.copy(poseFilter.position);
+      anchor.quaternion.copy(poseFilter.rotation);
     } else {
-      smoothingAnimId = null;
-      currentAppliedOrigin = origin;
-      currentAppliedFacing = facing;
+      const elapsedSeconds = (now - prevPoseLoopTime) / 1000;
+      const steps = Math.min(6, Math.max(1, elapsedSeconds / (1 / 60)));
+      const alpha = 1 - (1 - POSE_SMOOTHING) ** steps;
+      anchor.position.lerp(poseFilter.position, alpha);
+      anchor.quaternion.slerp(poseFilter.rotation, alpha);
     }
   }
 
-  smoothingAnimId = requestAnimationFrame(step);
+  prevPoseLoopTime = now;
+  requestAnimationFrame(poseFilterTick);
+}
+
+function startPoseFilterLoop() {
+  if (poseLoopRunning) return;
+  poseLoopRunning = true;
+  prevPoseLoopTime = performance.now();
+  requestAnimationFrame(poseFilterTick);
+}
+
+function stopPoseFilterLoop() {
+  poseLoopRunning = false;
+}
+
+// Punto de entrada llamado desde captureAndLocalize() con cada pose aceptada
+// (ya pasó el umbral de confianza). trackerSpace es el snapshot tomado ANTES
+// de mandar la foto — ver el comentario en captureAndLocalize sobre por qué
+// no se puede usar la pose actual del tracker al momento en que llega la
+// respuesta.
+function applyLocalizationResult(pose, trackerSpace) {
+  const m = trackerFromCloudSpace(pose.position, pose.rotation, trackerSpace);
+  poseFilter.refinePose(m);
+
+  if (poseFilter.sampleCount() === 1) {
+    // Primera corrección real: recién ahora el ancla tiene una
+    // transformación con sentido (antes era la identidad, apuntando a
+    // cualquier lado según el origen arbitrario del SLAM) — la mostramos y
+    // arrancamos el loop que la persigue cuadro a cuadro.
+    mapAnchorEl.setAttribute('visible', true);
+    startPoseFilterLoop();
+  }
 }
 
 // REVISIÓN (2026-07-20): hintPosition tiene que ir en LHS (Unity), el mismo
 // sistema que usa la doc oficial "Find Hint Coordinates" (coordenadas
 // (x,y,z) tomadas directamente sobre el mesh del mapa, relativas al origen).
-// Nosotros guardamos la pose en RHS (isRightHanded:true, la que consume
-// updateCameraProjectionMatrix), así que hay que convertir antes de mandarlo.
+// Nosotros pedimos la pose en RHS (isRightHanded:true, el sistema que usa
+// THREE.js/A-Frame), así que hay que convertir antes de mandarlo.
 // Para un vector de POSICIÓN (sin rotación) la conversión RHS<->LHS estándar
 // es invertir un solo eje — acá Z — lo cual es matemáticamente correcto y
 // suficiente (a diferencia de una matriz/quaternion de rotación, donde
@@ -850,44 +991,15 @@ async function checkProximityAndRequestLocalization() {
   await captureAndLocalize();
 }
 
-// cameraIntrinsics es REQUERIDO por /vps/map/query (confirmado contra el
-// spec OpenAPI real) pero ni WebXR ni getUserMedia exponen la calibración de
-// fábrica de la cámara en el navegador — no hay forma de conseguir fx/fy/px/py
-// "reales". Aproximación estándar en ausencia de eso: 8th Wall ya calibra el
-// FOV vertical de la cámara virtual (sceneEl.camera, un THREE.PerspectiveCamera
-// que xrweb ajusta para calzar con la cámara física real del dispositivo), así
-// que derivamos los intrínsecos de ese FOV + la resolución real de la captura.
-// Asume píxeles cuadrados (fx = fy) y punto principal centrado — el supuesto
-// típico cuando no hay calibración explícita.
-function estimateCameraIntrinsics(width, height) {
-  const camera = sceneEl.camera;
-  const vFovRad = THREE.MathUtils.degToRad(camera.fov);
-  const fy = height / (2 * Math.tan(vFovRad / 2));
-  return { fx: fy, fy, px: width / 2, py: height / 2 };
-}
-
-function getImageDimensions(base64Jpeg) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = reject;
-    img.src = base64Jpeg.startsWith('data:') ? base64Jpeg : `data:image/jpeg;base64,${base64Jpeg}`;
-  });
-}
-
-function stripBase64Prefix(base64Jpeg) {
-  return base64Jpeg.startsWith('data:') ? base64Jpeg.slice(base64Jpeg.indexOf(',') + 1) : base64Jpeg;
-}
-
 // Captura MULTI_IMAGE_COUNT frames en ráfaga para /vps/map/multi-image-query,
-// cada uno emparejado con la pose LOCAL de tracking (latestRealityPose) en el
-// instante exacto de esa captura. MULTI_IMAGE_DELAY_MS entre tomas: sin nada
-// de por medio, dos llamados seguidos a takeScreenshot() pueden devolver el
-// mismo frame de cámara (el feed no llegó a actualizarse todavía) — la espera
-// le da tiempo al pipeline de ticker un frame nuevo real entre foto y foto,
-// y de paso da margen a que el usuario mueva apenas el teléfono entre tomas
-// (el sentido de mandar varias fotos es cubrir ángulos/detalle distintos,
-// no repetir la misma imagen 4 veces).
+// cada uno emparejado con la pose LOCAL de tracking (localPose, snapshot
+// tomado dentro de captureImageFrame) en el instante exacto de esa captura.
+// MULTI_IMAGE_DELAY_MS entre tomas: sin nada de por medio, dos capturas
+// seguidas pueden leer el mismo cameraData.buffer si CameraPixelArray no
+// tickeó un frame nuevo entre medio — la espera le da tiempo al pipeline, y
+// de paso da margen a que el usuario mueva apenas el teléfono entre tomas
+// (el sentido de mandar varias fotos es cubrir ángulos/detalle distintos, no
+// repetir la misma imagen 4 veces).
 const MULTI_IMAGE_COUNT = 4; // el schema real solo define image1..image4, no hasta 6 como dice el texto de la doc
 const MULTI_IMAGE_DELAY_MS = Number(import.meta.env.VITE_MULTISET_MULTI_IMAGE_DELAY_MS) || 200;
 
@@ -895,11 +1007,7 @@ async function captureMultiImageFrames() {
   const frames = [];
   for (let i = 0; i < MULTI_IMAGE_COUNT; i++) {
     if (i > 0) await new Promise((resolve) => setTimeout(resolve, MULTI_IMAGE_DELAY_MS));
-    const base64Jpeg = await window.XR8.CanvasScreenshot.takeScreenshot();
-    frames.push({
-      base64Jpeg: stripBase64Prefix(base64Jpeg),
-      localPose: latestRealityPose, // snapshot del momento — puede ser null si el SLAM todavía no tickeó
-    });
+    frames.push(await captureImageFrame());
   }
   return frames;
 }
@@ -909,29 +1017,32 @@ async function captureAndLocalize() {
   btnLocalize.disabled = true;
   btnLocalize.textContent = 'Localizando...';
 
+  // Snapshot de la pose del tracker EN ESTE INSTANTE, antes de cualquier
+  // await — es la pose real de la cámara en el momento en que se toma la
+  // foto que le mandamos a MultiSet. Si en cambio leyéramos
+  // sceneEl.camera.matrixWorld recién cuando llega la respuesta del server
+  // (cientos de ms después), el teléfono ya se movió y trackerFromCloudSpace
+  // calcularía la transformación contra la pose equivocada — mismo principio
+  // que "const trackerSpace = camera.matrixWorld.clone()" en Immersal.
+  const trackerSpaceAtCapture = sceneEl.camera.matrixWorld.clone();
+
   try {
     let pose;
+    const hintPosition = lastKnownPosition ? toHintPositionString(lastKnownPosition) : undefined;
 
     if (MULTI_IMAGE_ENABLED) {
       setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock, multi-imagen)...' : 'Capturando 4 fotos para MultiSet...');
 
       const frames = await captureMultiImageFrames();
-      const resolution = await getImageDimensions(frames[0].base64Jpeg);
-      const cameraIntrinsics = estimateCameraIntrinsics(resolution.width, resolution.height);
-      const hintPosition = lastKnownPosition ? toHintPositionString(lastKnownPosition) : undefined;
+      const { width, height, intrinsics } = frames[0];
 
       setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock)...' : 'Localizando con MultiSet (multi-imagen)...');
-      pose = await queryMultiImageLocalization(frames, cameraIntrinsics, resolution, hintPosition);
+      pose = await queryMultiImageLocalization(frames, intrinsics, { width, height }, hintPosition);
     } else {
       setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock)...' : 'Localizando con MultiSet...');
 
-      const base64Jpeg = await window.XR8.CanvasScreenshot.takeScreenshot();
-      const queryImage = stripBase64Prefix(base64Jpeg);
-      const resolution = await getImageDimensions(base64Jpeg);
-      const cameraIntrinsics = estimateCameraIntrinsics(resolution.width, resolution.height);
-      const hintPosition = lastKnownPosition ? toHintPositionString(lastKnownPosition) : undefined;
-
-      pose = await queryLocalization(queryImage, cameraIntrinsics, resolution, hintPosition);
+      const frame = await captureImageFrame();
+      pose = await queryLocalization(frame.jpegBuffer, frame.intrinsics, { width: frame.width, height: frame.height }, hintPosition);
     }
 
     if (!pose) {
@@ -947,22 +1058,13 @@ async function captureAndLocalize() {
     // ya viene en coordenadas locales cartesianas: position {x,y,z} y
     // rotation como cuaternión real {x,y,z,w} (confirmado con el ejemplo
     // textual de la doc). Sin ángulos de Euler, sin matriz, sin conversión
-    // de por medio — se puede pasar directo.
+    // de por medio — se puede pasar directo a trackerFromCloudSpace().
     //
-    // updateCameraProjectionMatrix espera objetos PLANOS con esta forma
-    // exacta (8thwall.org/docs/api/engine/xrcontroller/updatecameraprojectionmatrix):
-    // { cam: {pixelRectWidth, pixelRectHeight, nearClipPlane, farClipPlane},
-    // origin: {x,y,z}, facing: {w,x,y,z} }. Antes pasábamos instancias de
-    // THREE.Vector3/THREE.Quaternion para origin/facing — funcionan por
-    // duck-typing, pero no es la forma documentada, y nos ata a THREE.js
-    // para algo que no lo necesita. Objetos planos.
-    //
-    // Validación defensiva: si la respuesta viniera con position/rotation
-    // en una forma inesperada (campo faltante, no numérico), preferimos
-    // tirar un error visible acá antes que mandar undefined/NaN a
-    // updateCameraProjectionMatrix — eso caería en sus defaults ({x:0,y:2,z:0}
-    // / cuaternión identidad) en silencio, un mal posicionamiento invisible
-    // y muy difícil de diagnosticar después.
+    // Validación defensiva: si la respuesta viniera con position/rotation en
+    // una forma inesperada (campo faltante, no numérico), preferimos tirar
+    // un error visible acá antes que componer una matriz con undefined/NaN
+    // — eso produciría un mal posicionamiento silencioso, muy difícil de
+    // diagnosticar después.
     const hasVector3 = (v) => v && ['x', 'y', 'z'].every((k) => typeof v[k] === 'number');
     const hasQuaternion = (q) => q && ['w', 'x', 'y', 'z'].every((k) => typeof q[k] === 'number');
     if (!hasVector3(pose.position) || !hasQuaternion(pose.rotation)) {
@@ -973,7 +1075,7 @@ async function captureAndLocalize() {
 
     // Umbral de confianza (ver CONFIDENCE_THRESHOLD arriba): una pose de baja
     // confianza puede ser peor que no corregir — la descartamos antes de
-    // tocar updateCameraProjectionMatrix en vez de aplicarla a ciegas.
+    // meterla en el PoseFilter en vez de aplicarla a ciegas.
     if ((pose.confidence || 0) < CONFIDENCE_THRESHOLD) {
       console.warn(`⚠️ MultiSet devolvió confianza ${confidencePct}% (mínimo ${Math.round(CONFIDENCE_THRESHOLD * 100)}%) — corrección descartada.`);
       setStatus(`MultiSet: confianza demasiado baja (${confidencePct}%), se mantiene la posición actual.`);
@@ -981,9 +1083,6 @@ async function captureAndLocalize() {
       confidenceBadge.style.display = 'block';
       return;
     }
-
-    const origin = { x: pose.position.x, y: pose.position.y, z: pose.position.z };
-    const facing = { w: pose.rotation.w, x: pose.rotation.x, y: pose.rotation.y, z: pose.rotation.z };
 
     // Log dedicado y en línea plana (no objeto anidado) a propósito: esto es
     // lo que hay que comparar entre dos taps de "Localizar" hechos desde
@@ -993,23 +1092,17 @@ async function captureAndLocalize() {
     // escondida adentro de un objeto que en la consola visual (eruda) o en el
     // texto copiado quedaba menos fácil de leer/diffear de un vistazo.
     console.log(
-      `📌 Corrección aplicada a 8th Wall — origin: x=${origin.x.toFixed(4)}, y=${origin.y.toFixed(4)}, z=${origin.z.toFixed(4)} `
-      + `| facing: w=${facing.w.toFixed(4)}, x=${facing.x.toFixed(4)}, y=${facing.y.toFixed(4)}, z=${facing.z.toFixed(4)} `
+      `📌 Pose de MultiSet — position: x=${pose.position.x.toFixed(4)}, y=${pose.position.y.toFixed(4)}, z=${pose.position.z.toFixed(4)} `
+      + `| rotation: w=${pose.rotation.w.toFixed(4)}, x=${pose.rotation.x.toFixed(4)}, y=${pose.rotation.y.toFixed(4)}, z=${pose.rotation.z.toFixed(4)} `
       + `| confianza=${confidencePct}%`
     );
 
-    // Suavizado en vez de aplicar directo — ver applyPose()/CORRECTION_SMOOTHING_MS
-    // arriba. En la primera localización, applyPose() detecta que no hay pose
-    // previa aplicada y hace un salto directo igual (no hay nada de qué
-    // "bailar" todavía, el cubo recién se está haciendo visible).
-    applyPose(origin, facing);
-    lastKnownPosition = origin; // para el hintPosition del próximo query
-
-    // Recién ahora el origen del mundo está anclado al del mapa real — antes
-    // de esto el cubo (visible="false" en index.html) hubiera mostrado una
-    // posición sin sentido, atada al origen arbitrario que XR8 fija al
-    // arrancar el SLAM.
-    cubeEl.setAttribute('visible', true);
+    // applyLocalizationResult mete la corrección en el PoseFilter (absorbe
+    // outliers) y realinea #map-anchor — no el tracking de XR8. La primera
+    // vez, hace visible el ancla y arranca el loop que la persigue cuadro a
+    // cuadro (ver comentario junto a poseFilterTick más arriba).
+    applyLocalizationResult(pose, trackerSpaceAtCapture);
+    lastKnownPosition = { x: pose.position.x, y: pose.position.y, z: pose.position.z }; // para el hintPosition del próximo query
 
     // A partir de la primera corrección real (no la default de arranque),
     // habilitamos la relocalización automática por pérdida de tracking (ver
@@ -1083,11 +1176,26 @@ XR8Promise.then((XR8) => {
   sceneEl.setAttribute('xrweb', 'scale: absolute');
   sceneEl.setAttribute('xrextras-runtime-error', '');
 
-  // CanvasScreenshot NO lo agregamos nosotros: confirmado en vivo que la
-  // integración A-Frame de XR8 ya lo agrega sola ("[XR] Camera Pipeline
-  // Module named canvasscreenshot was already added; skipping." si lo
-  // intentábamos de nuevo acá). XR8.CanvasScreenshot.takeScreenshot() en
-  // captureAndLocalize() ya lo puede usar sin que lo registremos a mano.
+  // CameraPixelArray SÍ hay que agregarlo a mano — a diferencia de
+  // CanvasScreenshot (que la integración A-Frame de XR8 ya agrega sola),
+  // este no es parte del set que arma xrweb por default: es opt-in porque
+  // tiene un costo de CPU real (lee de vuelta la textura de GPU cada frame).
+  // Config (2026-07-24, copiado del SDK WebXR de referencia —
+  // @multisetai/vps/dist/three/index.js, función N() — que manda JPEG a
+  // color y confirmó ser el que mejor trackea/reconoce contra MultiSet):
+  //   - Sin "luminance": default false → RGBA color, no 1 canal (antes
+  //     mandábamos escala de grises, una suposición no validada — ver el
+  //     TODO que había en multiset-client.js).
+  //   - "maxDimension: 1280": downsample en GPU (antes de leer los píxeles)
+  //     al mismo límite que usa el SDK de referencia
+  //     (Math.min(1, 1280/Math.max(w,h)) en su función N()) — evita mandar
+  //     fotos de 4K+ innecesariamente pesadas para el matching visual.
+  // Se registra ANTES de nuestro módulo para que, aunque no sería
+  // estrictamente necesario dado que onProcessGpu corre completo para todos
+  // los módulos antes de que empiece onUpdate para cualquiera, el orden
+  // quede igual al que usa el propio ejemplo de Immersal (de donde viene el
+  // resto del pipeline de captura).
+  XR8.addCameraPipelineModule(XR8.CameraPixelArray.pipelineModule({ maxDimension: 1280 }));
   XR8.addCameraPipelineModule(diagnosticsPipelineModule());
 
   btnStartAR.disabled = false;

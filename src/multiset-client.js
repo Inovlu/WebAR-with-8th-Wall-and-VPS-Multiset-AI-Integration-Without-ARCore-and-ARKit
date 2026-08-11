@@ -12,7 +12,8 @@
 // SDK de WebXR) puede necesitar que el equipo de MultiSet apruebe el dominio
 // manualmente (CORS). Mientras eso no esté resuelto, VITE_MULTISET_MOCK=true
 // hace que este módulo devuelva una pose falsa sin tocar la red, para no
-// bloquear el resto del desarrollo (captura de frame, updateCameraProjectionMatrix, etc).
+// bloquear el resto del desarrollo (captura de frame, transformación del
+// map-anchor, etc — ver src/main.js).
 
 const API_BASE = 'https://api.multiset.ai/v1';
 
@@ -104,18 +105,24 @@ async function getToken() {
 // puede parsear el body (falta el boundary). Por eso NO va 'Content-Type' en
 // headers, a diferencia de getToken()/getMapLocation() que sí son JSON.
 //
-// "queryImage" viaja como Blob binario (no como string base64) — la imagen
-// que da XR8.CanvasScreenshot.takeScreenshot() es base64, así que hay que
-// decodificarla a bytes antes de meterla en el FormData (ver base64ToBlob).
-// Nombre de campo CONFIRMADO (ya no es una suposición): verificado línea por
-// línea contra el bundle de @multisetai/vps (queryLocalization() del SDK
-// oficial arma el mismo FormData con "queryImage", "mapCode",
+// "queryImage" viaja como JPEG binario (Blob), no como base64: desde que
+// migramos la captura de frame a CameraPixelArray (ver
+// diagnosticsPipelineModule/captureImageFrame en main.js), lo que tenemos es
+// un ArrayBuffer JPEG a color, ya no un data URL base64 de
+// XR8.CanvasScreenshot ni el PNG en escala de grises de una vuelta anterior
+// (2026-07-24: se volvió a JPEG color, downsample a 1280px, calidad 0.7 —
+// copiado 1:1 del SDK WebXR de referencia, @multisetai/vps/dist/three/
+// index.js función ne(), que es el que mejor viene reconociendo contra
+// MultiSet). Nombre de campo CONFIRMADO (ya no es una suposición): verificado
+// línea por línea contra el bundle de @multisetai/vps (queryLocalization()
+// del SDK oficial arma el mismo FormData con "queryImage", "mapCode",
 // "isRightHanded", "fx"/"fy"/"px"/"py", "width"/"height", "hintPosition" —
-// idéntico a lo que mandamos acá).
+// idéntico a lo que mandamos acá, incluido el mismo formato de imagen).
 //
 // "isRightHanded: true" se manda a propósito para que la pose vuelva en el
-// mismo sistema que espera updateCameraProjectionMatrix (WebGL/Three.js), en
-// vez del left-handed (estilo Unity) que la API devuelve por default.
+// mismo sistema que usa THREE.js/A-Frame (WebGL, RHS) para componer la
+// matriz cloudSpace en main.js, en vez del left-handed (estilo Unity) que la
+// API devuelve por default.
 //
 // "hintPosition" es opcional: si se pasa (última pose conocida), acelera y
 // mejora la relocalización siguiente. Formato confirmado contra un ejemplo
@@ -125,13 +132,13 @@ async function getToken() {
 // que nosotros pedimos isRightHanded=true (RHS) para el resto del pipeline.
 // A propósito NO mandamos hintFloorHeight (indicación explícita: en este
 // mapa no ayuda y puede restringir de más la búsqueda).
-async function queryLocalization(base64Image, cameraIntrinsics, resolution, hintPosition) {
+async function queryLocalization(jpegBuffer, cameraIntrinsics, resolution, hintPosition) {
   if (MOCK_ENABLED) return mockLocalization();
 
   const token = await getToken();
 
   const formData = new FormData();
-  formData.append('queryImage', base64ToBlob(base64Image, 'image/jpeg'), 'frame.jpg');
+  formData.append('queryImage', new Blob([jpegBuffer], { type: 'image/jpeg' }), 'frame.jpg');
   formData.append('mapCode', MAP_CODE);
   formData.append('isRightHanded', 'true');
   formData.append('width', String(resolution.width));
@@ -189,7 +196,7 @@ async function queryLocalization(base64Image, cameraIntrinsics, resolution, hint
 // sueltos) — la aplanamos acá adentro para que el contrato hacia afuera sea
 // el mismo.
 //
-// "images": array de hasta 4 items { base64Jpeg, localPose } — localPose es
+// "images": array de hasta 4 items { jpegBuffer, localPose } — localPose es
 // {x,y,z,qx,qy,qz,qw} o null/undefined si todavía no hay tracking local
 // confiable en ese momento (el campo es opcional, se omite en vez de mandar
 // ceros inventados).
@@ -215,9 +222,9 @@ async function queryMultiImageLocalization(images, cameraIntrinsics, resolution,
   formData.append('queryMode', QUERY_MODE);
   if (hintPosition) formData.append('hintPosition', hintPosition);
 
-  clamped.forEach(({ base64Jpeg, localPose }, i) => {
+  clamped.forEach(({ jpegBuffer, localPose }, i) => {
     const n = i + 1;
-    formData.append(`image${n}`, base64ToBlob(base64Jpeg, 'image/jpeg'), `frame${n}.jpg`);
+    formData.append(`image${n}`, new Blob([jpegBuffer], { type: 'image/jpeg' }), `frame${n}.jpg`);
     if (localPose) formData.append(`image${n}_data`, JSON.stringify(localPose));
   });
 
@@ -247,18 +254,8 @@ async function queryMultiImageLocalization(images, cameraIntrinsics, resolution,
   };
 }
 
-// Decodifica un string base64 (con o sin prefijo "data:") a un Blob binario
-// — FormData necesita el archivo como binario, no como texto base64.
-function base64ToBlob(base64, mimeType) {
-  const raw = base64.startsWith('data:') ? base64.slice(base64.indexOf(',') + 1) : base64;
-  const byteChars = atob(raw);
-  const bytes = new Uint8Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
-}
-
 // Pose fija de ejemplo — solo para poder probar el resto del pipeline
-// (captura de frame → updateCameraProjectionMatrix) sin depender de que
+// (captura de frame → anclaje de #map-anchor en main.js) sin depender de que
 // MultiSet ya tenga el dominio de ngrok aprobado por CORS.
 function mockLocalization() {
   console.log('🧪 [mock] MultiSet devolviendo pose simulada');
