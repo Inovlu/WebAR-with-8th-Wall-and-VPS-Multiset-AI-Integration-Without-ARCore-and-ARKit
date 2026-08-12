@@ -290,9 +290,16 @@ function mockLocalization() {
 //
 // Se cachea: la ubicación de un mapa no cambia entre requests.
 let cachedMapLocation = null;
+const FORCE_ENV_LOCATION = import.meta.env.VITE_FORCE_ENV_LOCATION === 'true';
 
 async function getMapLocation() {
   if (cachedMapLocation) return cachedMapLocation;
+
+  if (FORCE_ENV_LOCATION && ENV_LATITUDE && ENV_LONGITUDE) {
+    console.log('MultiSet: Forzando coordenadas manuales de .env (VITE_FORCE_ENV_LOCATION=true)');
+    cachedMapLocation = { lat: Number(ENV_LATITUDE), lon: Number(ENV_LONGITUDE) };
+    return cachedMapLocation;
+  }
 
   const token = await getToken();
 

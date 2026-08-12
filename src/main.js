@@ -129,19 +129,20 @@ async function copyToClipboard(text) {
 }
 
 // ─── UI refs ──────────────────────────────────────────────────────────────────
-const landing         = document.getElementById('landing');
-const btnStartAR      = document.getElementById('btn-start-ar');
-const statusText      = document.getElementById('status-text');
-const sceneEl         = document.getElementById('ar-scene');
-const mapAnchorEl     = document.getElementById('map-anchor');
-const hud             = document.getElementById('hud');
-const btnLocalize     = document.getElementById('btn-localize');
-const btnToggleBg     = document.getElementById('btn-toggle-bg');
+const landing = document.getElementById('landing');
+const btnStartAR = document.getElementById('btn-start-ar');
+const statusText = document.getElementById('status-text');
+const sceneEl = document.getElementById('ar-scene');
+const mapAnchorEl = document.getElementById('map-anchor');
+const hud = document.getElementById('hud');
+const btnLocalize = document.getElementById('btn-localize');
 const confidenceBadge = document.getElementById('confidence-badge');
-const fallbackViewer  = document.getElementById('fallback-viewer');
-const fallbackCanvas  = document.getElementById('fallback-canvas');
+const fallbackViewer = document.getElementById('fallback-viewer');
+const fallbackCanvas = document.getElementById('fallback-canvas');
 const btnFallbackBack = document.getElementById('btn-fallback-back');
 const btnDebugToggleView = document.getElementById('btn-debug-toggle-view');
+const cubeScaleSlider = document.getElementById('cube-scale-slider');
+const arCube = document.getElementById('ar-cube');
 
 let xr8Instance = null; // seteado apenas XR8Promise resuelve, lo necesita triggerFallback()
 
@@ -742,23 +743,13 @@ function stopBackgroundLocalization() {
   }
 }
 
-// true si el usuario pausó la relocalización de fondo a mano (botón del HUD).
-// Se chequea tanto al pausar/reanudar como en el punto donde
-// captureAndLocalize() arranca el timer por primera vez — si el usuario ya
-// pausó antes de que llegara la primera localización exitosa, no queremos
-// que ese primer éxito reactive el timer por encima de su elección.
-let bgLocalizationPaused = false;
+// Relocalización de fondo automática: ya no se puede pausar (el botón fue removido).
+// Si se requiere deshabilitarla en el futuro, se puede comentar la llamada a startBackgroundLocalization().
+const bgLocalizationPaused = false;
 
-btnToggleBg.addEventListener('click', () => {
-  bgLocalizationPaused = !bgLocalizationPaused;
-
-  if (bgLocalizationPaused) {
-    stopBackgroundLocalization();
-    btnToggleBg.textContent = '▶️ Reanudar auto-localización';
-  } else {
-    btnToggleBg.textContent = '⏸ Pausar auto-localización';
-    if (hasLocalizedOnce) startBackgroundLocalization();
-  }
+cubeScaleSlider.addEventListener('input', (e) => {
+  const scale = parseFloat(e.target.value);
+  arCube.setAttribute('scale', `${scale} ${scale} ${scale}`);
 });
 
 // ─── Umbral de confianza ────────────────────────────────────────────────────
@@ -1217,7 +1208,7 @@ XR8Promise.then((XR8) => {
     // getCurrentPosition() en checkProximityAndRequestLocalization() no
     // interrumpe ese flujo con un prompt a mitad de camino.
     if (!MOCK_ENABLED && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(() => {}, () => {}, { enableHighAccuracy: true, timeout: 8000 });
+      navigator.geolocation.getCurrentPosition(() => { }, () => { }, { enableHighAccuracy: true, timeout: 8000 });
     }
 
     try {

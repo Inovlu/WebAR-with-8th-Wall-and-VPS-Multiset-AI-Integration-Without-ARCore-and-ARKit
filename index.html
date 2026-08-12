@@ -76,16 +76,23 @@
       align-items: center;
       gap: 12px;
     }
-    #btn-localize, #btn-toggle-bg {
+    #btn-localize, #cube-scale-slider {
       width: 220px;
     }
     #btn-localize {
       background: #fff;
       color: #111;
     }
-    #btn-toggle-bg {
-      background: rgba(255,255,255,0.12);
-      color: #fff;
+    #cube-scale-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 220px;
+      gap: 4px;
+    }
+    #cube-scale-container label {
+      font-size: 12px;
+      font-weight: 600;
     }
 
     /* ── Texto de estado durante AR ── */
@@ -259,7 +266,10 @@
   <!-- HUD durante AR: localización manual + pausa de la relocalización automática de fondo (cada N segundos) -->
   <div id="hud">
     <button id="btn-localize">📍 Localizar</button>
-    <button id="btn-toggle-bg">⏸ Pausar auto-localización</button>
+    <div id="cube-scale-container">
+      <label for="cube-scale-slider">Escala del Cubo</label>
+      <input type="range" id="cube-scale-slider" min="0.1" max="5.0" step="0.1" value="1" />
+    </div>
   </div>
 
   <!--

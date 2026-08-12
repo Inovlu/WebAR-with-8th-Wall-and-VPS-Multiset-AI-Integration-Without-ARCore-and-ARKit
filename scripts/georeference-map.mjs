@@ -38,10 +38,10 @@ function loadEnv(filePath) {
 
 const env = loadEnv(path.join(projectRoot, '.env'));
 
-const API_BASE      = 'https://api.multiset.ai/v1';
-const CLIENT_ID     = env.VITE_MULTISET_CLIENT_ID;
+const API_BASE = 'https://api.multiset.ai/v1';
+const CLIENT_ID = env.VITE_MULTISET_CLIENT_ID;
 const CLIENT_SECRET = env.VITE_MULTISET_CLIENT_SECRET;
-const MAP_CODE      = env.VITE_MAP_CODE;
+const MAP_CODE = env.VITE_MAP_CODE;
 
 if (!CLIENT_ID || !CLIENT_SECRET || !MAP_CODE) {
   console.error('[georeference-map] Faltan VITE_MULTISET_CLIENT_ID / VITE_MULTISET_CLIENT_SECRET / VITE_MAP_CODE en .env');
@@ -86,18 +86,16 @@ if (!GEOREFERENCE_SCOPE_ENABLED) {
 // igual, no es un problema del fit: hay que remedir 3-4 puntos con una
 // fuente independiente (satelital o estación fija + offsets, ver charla
 // previa) y volver a correr esto reemplazando esos "geo" por los reales.
+// IMPORTANTE: ACTUALMENTE LAS COORDENADAS EN EL LOCAL SPACE SON CORRECTAS PERO SON INCORRECTAS EN LAT,LONG,ALT. Para eso se debe calcular desde un celular con acceso a gps satelital
 const CONTROL_POINTS = [
-  { name: 'esquina-1',        geo: { latitude: -34.5855072, longitude: -58.5677103, altitude: 26.178 }, local: { x: -0.653, y: -1.422, z: -0.882 } },
-  { name: 'esquina-2',        geo: { latitude: -34.5855375, longitude: -58.5676923, altitude: 26.168 }, local: { x: 0.419,  y: -1.432, z: 2.716 } },
-  { name: 'sillon',           geo: { latitude: -34.5855420, longitude: -58.5677016, altitude: 26.811 }, local: { x: 1.388,  y: -0.789, z: 2.508 } },
-  { name: 'esquina-4',        geo: { latitude: -34.5855655, longitude: -58.5677222, altitude: 26.158 }, local: { x: 4.548,  y: -1.442, z: 3.142 } },
-  { name: 'esquina-5',        geo: { latitude: -34.5855549, longitude: -58.5677345, altitude: 27.173 }, local: { x: 4.581,  y: -0.427, z: 1.515 } },
-  { name: 'cama',             geo: { latitude: -34.5855250, longitude: -58.5677178, altitude: 26.752 }, local: { x: 1.191,  y: -0.848, z: 0.108 } },
-  { name: 'final-cama',       geo: { latitude: -34.5855266, longitude: -58.5677357, altitude: 26.121 }, local: { x: 2.523,  y: -1.479, z: -0.872 } },
-  { name: 'esquina-8',        geo: { latitude: -34.5855421, longitude: -58.5677478, altitude: 26.168 }, local: { x: 4.508,  y: -1.432, z: -0.356 } },
-  { name: 'esquina-9',        geo: { latitude: -34.5855570, longitude: -58.5677531, altitude: 26.192 }, local: { x: 5.990,  y: -1.408, z: 0.534 } },
-  { name: 'centro-suelo-10',  geo: { latitude: -34.5855428, longitude: -58.5677236, altitude: 26.197 }, local: { x: 2.929,  y: -1.403, z: 1.203 } },
-  { name: 'centro-suelo-11',  geo: { latitude: -34.5855244, longitude: -58.5677048, altitude: 26.140 }, local: { x: 0.277,  y: -1.460, z: 0.870 } },
+  { name: 'interseccion-placares', geo: { latitude: -34.5855072, longitude: -58.5677103, altitude: 26.178 }, local: { x: 0.281, y: 1.306, z: 2.893 } },
+  { name: 'centro-suelo', geo: { latitude: -34.5855375, longitude: -58.5676923, altitude: 26.168 }, local: { x: -0.641, y: -1.223, z: 1.216 } },
+  { name: 'LT-calendario', geo: { latitude: -34.5855420, longitude: -58.5677016, altitude: 26.811 }, local: { x: 0.248, y: 0.396, z: -0.969 } },
+  { name: 'centro-pared-triangulos', geo: { latitude: -34.5855655, longitude: -58.5677222, altitude: 26.158 }, local: { x: 2.036, y: -0.206, z: 1.194 } },
+  { name: 'esquina-repisa-marron', geo: { latitude: -34.5855549, longitude: -58.5677345, altitude: 27.173 }, local: { x: 2.430, y: 0.400, z: 0.053 } },
+  { name: 'origen-mundo', geo: { latitude: -34.5855250, longitude: -58.5677178, altitude: 26.752 }, local: { x: -0.131, y: -1.218, z: -0.033 } },
+  { name: 'suelo-dy', geo: { latitude: -34.5855266, longitude: -58.5677357, altitude: 26.121 }, local: { x: 0.974, y: -1.231, z: 1.848 } },
+  { name: 'centro-tecla-luz', geo: { latitude: -34.5855421, longitude: -58.5677478, altitude: 26.168 }, local: { x: -1.582, y: 0.010, z: 1.436 } },
 ];
 
 if (CONTROL_POINTS.length < 3) {
