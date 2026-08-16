@@ -1,18 +1,17 @@
-// Puerto directo de la clase PoseFilter del módulo oficial de Immersal
-// (cloud-editor-template/immersal-module.js) — único cambio real: recibe la
-// instancia de THREE por parámetro en vez de asumir un global "THREE", para
-// poder reusar la copia que ya trae A-Frame (ver comentario grande en
-// main.js sobre por qué evitamos una segunda instancia de Three.js).
+// Direct port of the PoseFilter class from the official Immersal module
+// (cloud-editor-template/immersal-module.js) — only real change: receives
+// the THREE instance as a parameter instead of assuming a "THREE" global,
+// so we can reuse the copy that A-Frame already ships (see the long comment
+// in main.js about why we avoid a second Three.js instance).
 //
-// Qué hace: en vez de aplicar cada localización de MultiSet tal cual llega,
-// mantiene un historial de las últimas 8 correcciones (refinePose) y
-// promedia posición/orientación descartando outliers (cualquier muestra que
-// se aleje más de 1 desvío estándar del resto del historial) — filterAVT
-// ("average, variance-trimmed"). Esto absorbe una localización puntual mala
-// (confianza baja pero por encima del umbral, o una imagen borrosa) sin que
-// se note como un salto en el mundo AR; la corrección final que se aplica
-// (this.position / this.rotation) es ese promedio filtrado, no la muestra
-// cruda más reciente.
+// What it does: instead of applying each MultiSet localization as-is, it
+// maintains a history of the last 8 corrections (refinePose) and averages
+// position/orientation while discarding outliers (any sample more than 1
+// standard deviation from the rest of the history) — filterAVT ("average,
+// variance-trimmed"). This absorbs a single bad localization (low confidence
+// but above threshold, or a blurry image) without it appearing as a jump in
+// the AR world; the final correction applied (this.position / this.rotation)
+// is that filtered average, not the most recent raw sample.
 export class PoseFilter {
   constructor(THREE) {
     this.THREE = THREE;
@@ -40,11 +39,12 @@ export class PoseFilter {
     this.invalidateHistory();
   }
 
-  // R: THREE.Matrix4 con la transformación de esta muestra puntual (tracker
-  // <- mapa). Se extraen directo de sus elementos la posición (columna 3) y
-  // los ejes X/Z (columnas 0/2) — reconstruir la rotación a partir de esos
-  // dos ejes filtrados por separado (en vez de promediar cuaterniones, que no
-  // es una operación lineal válida) es la misma técnica que usa Immersal.
+  // R: THREE.Matrix4 with the transformation for this particular sample
+  // (tracker ← map). Position (column 3) and the X/Z axes (columns 0/2)
+  // are extracted directly from its elements — reconstructing the rotation
+  // from those two axes filtered separately (instead of averaging
+  // quaternions, which is not a valid linear operation) is the same
+  // technique Immersal uses.
   refinePose(R) {
     const { THREE } = this;
     const idx = this.mSamples % this.mHistorySize;

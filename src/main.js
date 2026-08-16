@@ -8,39 +8,40 @@ import {
 } from './multiset-client.js';
 import { PoseFilter } from './pose-filter.js';
 
-// Usamos el THREE que ya trae empaquetado A-Frame (expuesto en window.AFRAME.THREE)
-// en vez de importar el paquete "three" de npm aparte. Antes importábamos los
-// dos: A-Frame 1.8.0 carga su propia copia de Three.js (r184, según el log de
-// consola) y nuestro import de "three" (^0.185.1 en package.json) traía una
-// instancia SEPARADA — de ahí el warning "THREE.WARNING: Multiple instances of
-// Three.js being imported." No es solo cosmético: son dos registros de clases
-// distintos, así que un chequeo interno tipo "instanceof THREE.Vector3" contra
-// un objeto creado con la otra instancia falla en silencio. Reusar la de
-// A-Frame elimina el duplicado y además nos ahorra bajar Three.js dos veces al
-// bundle. index.html carga aframe.min.js síncrono en <head> (sin async/defer),
-// antes que este módulo (que es <script type="module">, deferred por
-// default), así que window.AFRAME ya está listo acá.
+// We use the THREE that A-Frame already bundles (exposed at
+// window.AFRAME.THREE) instead of importing the "three" npm package
+// separately. Previously we imported both: A-Frame 1.8.0 loads its own
+// copy of Three.js (r184, per the console log) and our "three" import
+// (^0.185.1 in package.json) brought a SEPARATE instance — hence the
+// warning "THREE.WARNING: Multiple instances of Three.js being imported."
+// It's not just cosmetic: they have two separate class registries, so an
+// internal check like "instanceof THREE.Vector3" against an object
+// created with the other instance fails silently. Reusing A-Frame's
+// eliminates the duplicate and also saves downloading Three.js twice in
+// the bundle. index.html loads aframe.min.js synchronously in <head>
+// (no async/defer), before this module (which is <script type="module">,
+// deferred by default), so window.AFRAME is already ready here.
 const THREE = window.AFRAME.THREE;
 
-// ─── Consola visual en mobile (?debug=1) ───────────────────────────────────────
-// El inspector remoto de Chrome (chrome://inspect) no está andando para debuggear
-// en el celular, así que exponemos una consola en pantalla como alternativa:
-// eruda dibuja un botón flotante que abre un panel con console.log/error, red,
-// elementos, etc. Solo se carga si el link tiene "?debug=1" para no mostrársela
-// a usuarios reales de la experiencia AR.
+// ─── Visual console on mobile (?debug=1) ────────────────────────────────────
+// Chrome's remote inspector (chrome://inspect) isn't working for debugging
+// on the phone, so we expose an on-screen console as an alternative: eruda
+// draws a floating button that opens a panel with console.log/error,
+// network, elements, etc. Only loaded if the URL has "?debug=1" to avoid
+// showing it to real users of the AR experience.
 if (new URLSearchParams(location.search).has('debug')) {
   setupDebugConsole();
 }
 
-// El botón de copiar de eruda solo copia UNA línea a la vez, y encima exige
-// tocarla primero para "seleccionarla" (si no, queda gris/deshabilitado — no
-// es un bug, es así de fábrica). Para debuggear en el celular sirve mucho más
-// poder copiar TODO el historial de un toque, así que interceptamos
-// console.* nosotros mismos en un buffer propio y agregamos un botón flotante
-// aparte que copia ese buffer completo.
+// Eruda's copy button only copies ONE line at a time, and it also
+// requires tapping it first to "select" it (otherwise it's grayed out/
+// disabled — not a bug, that's by design). For debugging on a phone it's
+// much more useful to be able to copy ALL history in one tap, so we
+// intercept console.* ourselves in our own buffer and add a separate
+// floating button that copies the full buffer.
 function setupDebugConsole() {
   const logBuffer = [];
-  const MAX_LOG_LINES = 1000; // evita crecer sin límite en una sesión larga
+  const MAX_LOG_LINES = 1000; // avoid growing without limit in a long session
 
   ['log', 'info', 'warn', 'error', 'debug'].forEach((level) => {
     const original = console[level].bind(console);
@@ -65,12 +66,12 @@ function setupDebugConsole() {
     eruda.init();
 
     const btnCopyConsole = document.createElement('button');
-    btnCopyConsole.textContent = '📋 Copiar consola';
+    btnCopyConsole.textContent = '📋 Copy console';
     Object.assign(btnCopyConsole.style, {
       position: 'fixed',
       bottom: '70px',
       right: '16px',
-      zIndex: 2147483647, // por encima del panel de eruda
+      zIndex: 2147483647, // above the eruda panel
       width: 'auto',
       padding: '8px 12px',
       fontSize: '12px',
@@ -81,10 +82,10 @@ function setupDebugConsole() {
       border: '1px solid rgba(255,255,255,0.3)',
     });
     btnCopyConsole.addEventListener('click', async () => {
-      const text = logBuffer.join('\n') || '(consola vacía)';
+      const text = logBuffer.join('\n') || '(empty console)';
       const ok = await copyToClipboard(text);
       const original = btnCopyConsole.textContent;
-      btnCopyConsole.textContent = ok ? '✅ Copiado' : '❌ Error al copiar';
+      btnCopyConsole.textContent = ok ? '✅ Copied' : '❌ Copy failed';
       setTimeout(() => { btnCopyConsole.textContent = original; }, 1500);
     });
     document.body.appendChild(btnCopyConsole);
@@ -99,17 +100,18 @@ function safeStringify(value) {
   }
 }
 
-// navigator.clipboard requiere contexto seguro (https/ngrok) y a veces falla
-// en mobile aunque el sitio sea https (permiso denegado, WebView, etc.) — si
-// falla, caemos a document.execCommand("copy") con un textarea oculto, que es
-// más tolerante en navegadores mobile viejos.
+// navigator.clipboard requires a secure context (https/ngrok) and
+// sometimes fails on mobile even if the site is https (permission
+// denied, WebView, etc.) — if it fails, we fall back to
+// document.execCommand("copy") with a hidden textarea, which is more
+// tolerant in older mobile browsers.
 async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return true;
     } catch {
-      // sigue al fallback
+      // fall through to fallback
     }
   }
   try {
@@ -144,58 +146,58 @@ const btnDebugToggleView = document.getElementById('btn-debug-toggle-view');
 const cubeScaleSlider = document.getElementById('cube-scale-slider');
 const arCube = document.getElementById('ar-cube');
 
-let xr8Instance = null; // seteado apenas XR8Promise resuelve, lo necesita triggerFallback()
+let xr8Instance = null; // set as soon as XR8Promise resolves, needed by triggerFallback()
 
 function setStatus(msg) {
   statusText.textContent = msg;
   statusText.style.display = msg ? 'block' : 'none';
 }
 
-// Muestra el error tanto en el status (visible en pantalla, clave para
-// debuggear en un celular sin devtools) como en consola.
+// Shows the error both in the status bar (visible on screen, crucial for
+// debugging on a phone without devtools) and in console.
 function showError(prefix, error) {
   console.error(prefix, error);
   setStatus(`${prefix} ${error?.message || error}`);
   btnStartAR.disabled = false;
-  btnStartAR.textContent = 'Iniciar AR';
+  btnStartAR.textContent = 'Start AR';
   landing.style.display = 'flex';
   btnDebugToggleView.style.display = 'none';
 }
 
-// ─── Fallback automático por GPU/driver insuficiente: DESACTIVADO ─────────────
-// Hubo un intento de detectar reactivamente un SLAM roto (avalancha de errores
-// de WebGL, confirmado en el Moto E40 y un Redmi Note 13 Pro con driver ARM
-// beta) mandando automáticamente al visor 3D si el tracking nunca llegaba a
-// 'NORMAL' dentro de un timeout. Se sacó (2026-07-22): un timeout por tiempo
-// (incluso combinado con un mínimo de movimiento acumulado) sigue dando falsos
-// positivos — hay dispositivos SANOS que simplemente tardan más en estabilizar
-// el SLAM visual-inercial, y no hay forma confiable de distinguir "va a tardar
-// más" de "está roto y nunca va a llegar" sin arriesgarse a expulsar a un
-// usuario legítimo a mitad de sesión. El botón de testeo
-// (#btn-debug-toggle-view) sigue disponible para comparar a mano cámara/AR vs.
-// visor 3D cuando haga falta diagnosticar un dispositivo puntual.
+// ─── Automatic fallback for insufficient GPU/driver: DISABLED ─────────────────
+// There was an attempt to reactively detect a broken SLAM (avalanche of WebGL
+// errors, confirmed on Moto E40 and a Redmi Note 13 Pro with ARM beta driver)
+// by automatically sending users to the 3D viewer if tracking never reached
+// 'NORMAL' within a timeout. Removed (2026-07-22): a time-based timeout
+// (even combined with a minimum of accumulated movement) still gives false
+// positives — there are HEALTHY devices that simply take longer to stabilize
+// visual-inertial SLAM, and there's no reliable way to distinguish "it'll take
+// longer" from "it's broken and will never get there" without risking ejecting
+// a legitimate user mid-session. The test button (#btn-debug-toggle-view)
+// remains available for manually comparing camera/AR vs. 3D viewer when
+// diagnosing a specific device.
 let fallbackTriggered = false;
 
-// Se pone en true la primera vez que reality.trackingStatus === 'NORMAL' en
-// CUALQUIER momento de la sesión. Habilita el botón "Localizar" (ver
-// btnLocalize más abajo: deshabilitado hasta este punto, para no anclar el
-// origen del mundo contra una pose de tracking todavía inestable — eso es lo
-// que causaba que el cubo "saltara" apenas el SLAM pasaba de INITIALIZING a
-// NORMAL).
+// Set to true the first time reality.trackingStatus === 'NORMAL' at
+// ANY point during the session. Enables the "Localize" button (see
+// btnLocalize below: disabled until this point, to avoid anchoring
+// the world origin against a still-unstable tracking pose — that's
+// what caused the cube to "jump" as soon as SLAM transitioned from
+// INITIALIZING to NORMAL).
 let everReachedNormalTracking = false;
 
 function triggerFallback(reason) {
   if (fallbackTriggered) return;
   fallbackTriggered = true;
 
-  console.warn('⚠️ Fallback activado:', reason);
+  console.warn('⚠️ Fallback triggered:', reason);
 
-  // Frenamos el run loop de XR8 y soltamos la cámara — no tiene sentido seguir
-  // gastando batería/CPU en un tracking que ya sabemos que está roto.
+  // Stop XR8's run loop and release the camera — no point in continuing
+  // to spend battery/CPU on tracking we already know is broken.
   try {
     xr8Instance?.pause();
   } catch (err) {
-    console.warn('No se pudo pausar XR8:', err);
+    console.warn('Could not pause XR8:', err);
   }
   stopBackgroundLocalization();
   stopPoseFilterLoop();
@@ -206,23 +208,23 @@ function triggerFallback(reason) {
   landing.style.display = 'none';
   showFallbackView();
 
-  // Este fallback es DEFINITIVO para la sesión (cámara soltada, XR8 pausado)
-  // — a diferencia del toggle de testeo, acá no hay forma confiable de
-  // volver a la vista de cámara sin recargar (ver btnFallbackBack). Ocultamos
-  // el botón de test para no ofrecer una vuelta que no puede funcionar bien.
+  // This fallback is DEFINITIVE for the session (camera released, XR8
+  // paused) — unlike the test toggle, there's no reliable way to
+  // return to the camera view without reloading (see btnFallbackBack).
+  // We hide the test button so we don't offer a return that can't work.
   btnDebugToggleView.style.display = 'none';
 }
 
-// Vista 3D simple del mismo cubo, sin cámara ni tracking — un THREE.Scene
-// aparte, independiente de A-Frame/XR8. Gira sola para poder verse desde
-// todos los ángulos sin necesitar controles táctiles.
+// Simple 3D view of the same cube, without camera or tracking — a
+// separate THREE.Scene, independent of A-Frame/XR8. Auto-rotates so
+// it can be viewed from all angles without needing touch controls.
 //
-// Creada UNA sola vez (lazy, en ensureFallbackScene): el toggle de testeo
-// puede mostrar/ocultar este visor muchas veces en la misma sesión, y cada
-// "new THREE.WebGLRenderer(...)" abre un contexto WebGL nuevo sobre el mismo
-// <canvas> — Android/Chrome tiene un límite bajo de contextos WebGL vivos
-// simultáneos, así que recrearlo en cada toggle terminaría agotándolo. Lo que
-// SÍ se detiene/reinicia en cada toggle es el loop de animación (rAF), vía
+// Created ONCE (lazy, in ensureFallbackScene): the test toggle can
+// show/hide this viewer many times in the same session, and each
+// "new THREE.WebGLRenderer(...)" opens a new WebGL context on the same
+// <canvas> — Android/Chrome has a low limit of simultaneous live WebGL
+// contexts, so recreating it on each toggle would exhaust it. What IS
+// stopped/restarted on each toggle is the animation loop (rAF), via
 // startFallbackPreview()/stopFallbackPreview().
 let fallbackRenderer = null;
 let fallbackScene = null;
@@ -256,11 +258,11 @@ function ensureFallbackScene() {
 
 function startFallbackPreview() {
   ensureFallbackScene();
-  if (fallbackAnimating) return; // ya hay un loop corriendo, no arrancar otro en paralelo
+  if (fallbackAnimating) return; // loop already running, don't start another in parallel
   fallbackAnimating = true;
 
   function animate() {
-    if (!fallbackAnimating) return; // corta el loop al ocultar el fallback
+    if (!fallbackAnimating) return; // cuts the loop when hiding fallback
     fallbackCube.rotation.y += 0.012;
     fallbackCube.rotation.x += 0.004;
     fallbackRenderer.render(fallbackScene, fallbackCamera);
@@ -273,10 +275,10 @@ function stopFallbackPreview() {
   fallbackAnimating = false;
 }
 
-// ─── Mostrar/ocultar el visor 3D de respaldo ───────────────────────────────
-// Compartido entre el fallback automático (triggerFallback, definitivo) y el
-// botón de testeo (reversible) — ambos necesitan la misma coreografía de UI,
-// solo difieren en si además pausan XR8/sueltan la cámara.
+// ─── Show/hide the fallback 3D viewer ───────────────────────────────────────
+// Shared between the automatic fallback (triggerFallback, definitive) and
+// the test button (reversible) — both need the same UI choreography,
+// they only differ in whether they also pause XR8/release the camera.
 function showFallbackView() {
   sceneEl.style.display = 'none';
   hud.style.display = 'none';
@@ -294,66 +296,69 @@ function showARView() {
 }
 
 btnFallbackBack.addEventListener('click', () => {
-  // Recargar es lo más simple y confiable acá: XR8 no está pensado para
-  // reiniciar una sesión ya pausada de forma prolija.
+  // Reload is the simplest and most reliable approach here: XR8 isn't
+  // designed to cleanly restart an already-paused session.
   window.location.reload();
 });
 
-// ─── Botón de TESTEO: alternar cámara/AR ↔ visor 3D a mano ─────────────────
-// A diferencia del fallback automático de arriba, esto NO pausa XR8 ni suelta
-// la cámara — el motor sigue corriendo en segundo plano aunque se esté
-// mostrando el visor 3D. Sirve para comparar a ojo, en un dispositivo donde
-// el cubo no se proyecta, si el problema es de renderizado (nunca aparece
-// nada nuevo, ni en este visor de prueba) o de posicionamiento (el visor 3D
-// si muestra el cubo, solo que la pose real lo deja fuera de cámara).
+// ─── TEST button: manually toggle camera/AR ↔ 3D viewer ─────────────────────
+// Unlike the automatic fallback above, this does NOT pause XR8 or
+// release the camera — the engine keeps running in the background even
+// while the 3D viewer is showing. Useful for visually comparing, on a
+// device where the cube doesn't project, whether the problem is
+// rendering (nothing new ever appears, not even in this test viewer) or
+// positioning (the 3D viewer does show the cube, it's just that the
+// real pose puts it out of camera view).
 let inDebugFallbackView = false;
 
 btnDebugToggleView.addEventListener('click', () => {
-  if (fallbackTriggered) return; // ya no hay cámara viva a la que volver
+  if (fallbackTriggered) return; // no live camera to go back to
 
   inDebugFallbackView = !inDebugFallbackView;
 
   if (inDebugFallbackView) {
     showFallbackView();
-    btnDebugToggleView.textContent = '📷 Ver cámara/AR';
+    btnDebugToggleView.textContent = '📷 View camera/AR';
   } else {
     showARView();
-    btnDebugToggleView.textContent = '🧪 Ver visor 3D';
+    btnDebugToggleView.textContent = '🧪 View 3D viewer';
   }
 });
 
-// ─── Fix: forzar la cámara trasera principal (no macro) ───────────────────────
-// Dos intentos anteriores fallaron: track.applyConstraints() (OverconstrainedError)
-// y pedir el stream nuevo ANTES de soltar el viejo (NotReadableError: "Could not
-// start video source"). El error clave estaba en el orden: pedíamos la cámara
-// nueva mientras la vieja (la que XR8 ya tenía abierta) seguía activa. Sitios
-// como https://es.webcamtests.com/ sí pueden abrir cada lente por separado —
-// confirmando que no es un límite del dispositivo, es que hay que soltar la
-// cámara actual primero y darle un margen al driver antes de pedir la otra.
-// Esto opera a nivel DOM/window (MediaStreamTrack), independiente de si el
-// renderizado es Three.js manual o A-Frame — sigue igual con la migración.
+// ─── Fix: force the main back camera (not macro) ────────────────────────────
+// Two previous attempts failed: track.applyConstraints()
+// (OverconstrainedError) and requesting the new stream BEFORE releasing
+// the old one (NotReadableError: "Could not start video source"). The
+// key mistake was in the order: we requested the new camera while the
+// old one (that XR8 already had open) was still active. Sites like
+// https://es.webcamtests.com/ CAN open each lens separately —
+// confirming it's not a device limitation; you just need to release
+// the current camera first and give the driver a margin before
+// requesting the other one. This operates at DOM/window level
+// (MediaStreamTrack), independent of whether rendering is manual
+// Three.js or A-Frame — stays the same with the migration.
 async function forceMainBackCamera(videoEl) {
   const track = videoEl?.srcObject?.getVideoTracks?.()[0];
   if (!track) return;
 
-  console.log('📷 Cámara activa:', track.label || '(sin label)');
+  console.log('📷 Active camera:', track.label || '(no label)');
 
   let videoInputs;
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     videoInputs = devices.filter((d) => d.kind === 'videoinput');
-    console.log(`📷 ${videoInputs.length} cámara(s) detectadas:`,
-      videoInputs.map((d) => `${d.label || '(sin label)'} [${d.deviceId.slice(0, 12)}...]`));
+    console.log(`📷 ${videoInputs.length} camera(s) detected:`,
+      videoInputs.map((d) => `${d.label || '(no label)'} [${d.deviceId.slice(0, 12)}...]`));
   } catch (err) {
-    console.warn('No se pudo enumerar cámaras:', err);
+    console.warn('Could not enumerate cameras:', err);
     return;
   }
 
-  // Convención de Android: índice más bajo = sensor principal, los índices
-  // más altos son lentes auxiliares agregadas después (ultra wide, macro,
-  // profundidad). Este equipo etiqueta "camera N, facing back" (sin el "2"
-  // que usa el label de Samsung/Huawei), así que parseamos el número en vez
-  // de buscar un string exacto.
+  // Android convention: lowest index = main sensor, higher indices
+  // are auxiliary lenses added later (ultra wide, macro, depth).
+  // This device labels "camera N, facing back" (without the "2"
+  // Samsung/Huawei labels use), so we parse the number instead
+  // of looking for an exact string.
   const backCameras = videoInputs
     .filter((d) => /facing back/i.test(d.label))
     .map((d) => ({ device: d, index: parseInt((d.label.match(/camera2?\s*(\d+)/i) || [])[1], 10) }))
@@ -363,22 +368,23 @@ async function forceMainBackCamera(videoEl) {
   const currentId = track.getSettings().deviceId;
 
   if (!mainCamera || mainCamera.deviceId === currentId) {
-    setStatus(`Cámara: ${track.label || 'desconocida'}`);
+    setStatus(`Camera: ${track.label || 'unknown'}`);
     return;
   }
 
-  // Soltamos la cámara actual ANTES de pedir la otra (el orden que nos
-  // faltaba) y le damos un margen al driver para liberarla de verdad.
+  // Release the current camera BEFORE requesting the other one (the
+  // step we were missing) and give the driver margin to actually free it.
   track.stop();
   await new Promise((resolve) => setTimeout(resolve, 300));
 
-  // "ideal" (no "exact"/min): pedimos la mejor calidad posible sin que la
-  // request falle si el sensor no llega a 1920x1080/30fps — el browser cae al
-  // máximo que sí soporte. SIN esto, Chrome/Android arrancaba el stream de
-  // reemplazo en una resolución baja por default (algo como 640x480) en vez
-  // de la que el sensor real puede dar — confirmado como la causa de que la
-  // cámara se viera de calidad mucho peor que la app nativa de cámara del
-  // mismo Redmi Note 13 (que sí anda en 1920x1080).
+  // "ideal" (not "exact"/min): request the best possible quality without
+  // the request failing if the sensor can't reach 1920x1080/30fps — the
+  // browser falls back to the maximum it does support. WITHOUT this,
+  // Chrome/Android started the replacement stream at a low default
+  // resolution (something like 640x480) instead of what the sensor can
+  // actually deliver — confirmed as the cause of the camera looking
+  // much worse quality than the native camera app on the same Redmi
+  // Note 13 (which does run at 1920x1080).
   const idealVideoConstraints = {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
@@ -390,32 +396,32 @@ async function forceMainBackCamera(videoEl) {
       video: { deviceId: { exact: mainCamera.deviceId }, ...idealVideoConstraints },
     });
     videoEl.srcObject = newStream;
-    console.log('✅ Cámara cambiada a la principal:', mainCamera.label);
-    setStatus(`Cámara: ${mainCamera.label}`);
+    console.log('✅ Camera switched to main:', mainCamera.label);
+    setStatus(`Camera: ${mainCamera.label}`);
   } catch (err) {
-    // No nos quedamos sin cámara si la principal tampoco abre: reabrimos la
-    // original como red de seguridad.
-    console.warn('No se pudo abrir la cámara principal, reabriendo la original:', err);
+    // Don't leave the user without a camera if the main one also
+    // fails to open: reopen the original as a safety net.
+    console.warn('Could not open main camera, reopening original:', err);
     try {
       const fallbackStream = await navigator.mediaDevices.getUserMedia({
         video: { deviceId: { exact: currentId }, ...idealVideoConstraints },
       });
       videoEl.srcObject = fallbackStream;
-      setStatus(`No se pudo cambiar de cámara (${err.name}). Se mantiene: ${track.label}`);
+      setStatus(`Could not switch camera (${err.name}). Keeping: ${track.label}`);
     } catch (fallbackErr) {
-      console.error('No se pudo reabrir ninguna cámara:', fallbackErr);
-      showError('Error de cámara:', fallbackErr);
+      console.error('Could not reopen any camera:', fallbackErr);
+      showError('Camera error:', fallbackErr);
     }
   }
 }
 
-// XR8 no expone un evento público confiable de "la cámara ya tiene stream"
-// (es un motor cerrado, sin documentación de ese detalle interno — un primer
-// intento enganchado a un supuesto evento "xr.camerastatuschange" en window
-// nunca disparó, así que lo descartamos). En vez de seguir adivinando su bus
-// de eventos interno, observamos el DOM directamente: sabemos que crea un
-// <video> oculto para el feed de cámara, así que apenas aparece uno con
-// stream activo, logueamos qué cámara quedó activa.
+// XR8 doesn't expose a reliable public event for "the camera now has a
+// stream" (it's a closed engine, with no documentation on that internal
+// detail — a first attempt hooked to a supposed "xr.camerastatuschange"
+// event on window never fired, so we discarded it). Instead of guessing
+// its internal event bus, we observe the DOM directly: we know it creates
+// a hidden <video> for the camera feed, so as soon as one appears with
+// an active stream, we log which camera ended up active.
 function watchForCameraVideo() {
   const tryFix = (video) => {
     if (video.dataset.lensFixApplied) return;
@@ -441,63 +447,67 @@ function watchForCameraVideo() {
 
 watchForCameraVideo();
 
-// ─── Módulo custom del pipeline: diagnóstico ───────────────────────────────────
-// El cubo de prueba ahora es 100% declarativo (<a-entity> en index.html) — xrweb
-// ya arma la escena/cámara de A-Frame, así que no hace falta un onStart manual
-// para agregar el cubo ni para fijar la posición inicial de la cámara. Lo único
-// que sigue haciendo falta desde JS es diagnóstico: enterarnos si el pipeline
-// tira una excepción, y loguear el estado del tracker.
+// ─── Custom pipeline module: diagnostics ─────────────────────────────────────
+// The test cube is now 100% declarative (<a-entity> in index.html) — xrweb
+// already sets up the A-Frame scene/camera, so there's no need for a manual
+// onStart to add the cube or fix the camera's initial position. The only
+// thing still needed from JS is diagnostics: knowing if the pipeline throws
+// an exception, and logging the tracker state.
 function diagnosticsPipelineModule() {
   return {
-    name: 'diagnostico',
+    name: 'diagnostics',
 
     onStart: () => {
-      console.log('✅ Pipeline XR8 iniciado (A-Frame + xrweb).');
-      // "Localizar" arranca deshabilitado: trackerFromCloudSpace() usa
-      // sceneEl.camera.matrixWorld (el tracker nativo) como referencia para
-      // anclar #map-anchor — localizar mientras el SLAM todavía está
-      // LIMITED/INITIALIZING metería esa pose inestable directo en el
-      // PoseFilter (ver comentario largo junto a everReachedNormalTracking
-      // más arriba). Se rehabilita solo, más abajo en onUpdate, la primera
-      // vez que trackingStatus === 'NORMAL'.
+      console.log('✅ XR8 pipeline started (A-Frame + xrweb).');
+      // "Localize" starts disabled: trackerFromCloudSpace() uses
+      // sceneEl.camera.matrixWorld (the native tracker) as reference
+      // to anchor #map-anchor — localizing while SLAM is still
+      // LIMITED/INITIALIZING would feed that unstable pose directly
+      // into the PoseFilter (see long comment next to
+      // everReachedNormalTracking above). It gets re-enabled below
+      // in onUpdate, the first time trackingStatus === 'NORMAL'.
       btnLocalize.disabled = true;
-      setStatus('Motor iniciado. Mové el teléfono lentamente para estabilizar el tracking...');
+      setStatus('Engine started. Move the phone slowly to stabilize tracking...');
       hud.style.display = 'flex';
     },
 
-    onException: (error) => showError('Error en el pipeline XR8:', error),
+    onException: (error) => showError('XR8 pipeline error:', error),
 
-    // "reality.trackingstatus" es un evento interno documentado del framework
-    // de Camera Pipeline Modules (a diferencia de "xr.camerastatuschange", que
-    // resultó no ser accesible desde afuera). Nos suscribimos acá para ver en
-    // consola qué dice el propio tracker sobre su estado — más confiable que
-    // juzgar a ojo si el cubo "tiembla mucho" o no.
+    // "reality.trackingstatus" is a documented internal event from the
+    // Camera Pipeline Modules framework (unlike
+    // "xr.camerastatuschange", which turned out to not be accessible
+    // from outside). We subscribe here to see in console what the
+    // tracker itself reports about its state — more reliable than
+    // judging by eye whether the cube "shakes too much" or not.
     listeners: [
       { event: 'reality.trackingstatus', process: (e) => console.log('🧭 reality.trackingstatus:', e.detail) },
     ],
 
-    // Muestreo periódico de processCpuResult.reality (posición/rotación que
-    // el propio SLAM de 8th Wall reporta cuadro a cuadro, entre correcciones
-    // de MultiSet). "reality" es el nombre fijo con el que XR8 expone el
-    // resultado de su world tracking interno a CUALQUIER módulo de pipeline
-    // via onUpdate — no hace falta agregar XR8.XrController.pipelineModule()
-    // aparte, xrweb ya lo deja corriendo. Se loguea 1 vez por segundo (no cada
-    // frame, para no inundar la consola) para tener evidencia objetiva de
-    // cuánto "flota" el tracking entre taps de "Localizar", en vez de juzgar
-    // a ojo si el cubo tiembla.
-    // Además del muestreo, esto replica una técnica del SDK oficial de
-    // MultiSet (@multisetai/vps, xrLoop()): cuando no hay pose de tracking
-    // durante W=60 frames seguidos (~2s a 30fps) dispara una relocalización
-    // automática (this.options.relocalization && this.localizeFrame()). No
-    // tenemos "viewer pose ausente" (eso es WebXR); el equivalente en 8th
-    // Wall es reality.trackingStatus === 'LIMITED' sostenido. Mismo umbral
-    // (60 frames) por no tener uno propio mejor fundamentado.
+    // Periodic sampling of processCpuResult.reality (position/rotation
+    // that 8th Wall's own SLAM reports frame by frame, between MultiSet
+    // corrections). "reality" is the fixed name XR8 uses to expose its
+    // internal world tracking result to ANY pipeline module via
+    // onUpdate — no need to add XR8.XrController.pipelineModule()
+    // separately, xrweb already has it running. Logged once per second
+    // (not every frame, to avoid flooding the console) to have
+    // objective evidence of how much tracking "floats" between
+    // "Localize" taps, instead of judging by eye whether the cube
+    // shakes.
+    // Additionally, this replicates a technique from the official
+    // MultiSet SDK (@multisetai/vps, xrLoop()): when there's no
+    // tracking pose for W=60 consecutive frames (~2s at 30fps), it
+    // triggers an automatic relocalization
+    // (this.options.relocalization && this.localizeFrame()). We don't
+    // have "absent viewer pose" (that's WebXR); the equivalent in 8th
+    // Wall is a sustained reality.trackingStatus === 'LIMITED'. Same
+    // threshold (60 frames) since we don't have our own better
+    // grounded one.
     //
-    // Acá también leemos, cada frame, los intrínsecos reales de cámara
-    // (reality.intrinsics) y el buffer crudo de píxeles que entrega
-    // CameraPixelArray (processGpuResult.camerapixelarray) — ver el
-    // comentario grande junto a "cameraData" más abajo sobre por qué esto
-    // vive en onUpdate y no en un onProcessCpu propio.
+    // Also here, each frame, we read the real camera intrinsics
+    // (reality.intrinsics) and the raw pixel buffer delivered by
+    // CameraPixelArray (processGpuResult.camerapixelarray) — see the
+    // long comment next to "cameraData" below about why this lives in
+    // onUpdate and not in a separate onProcessCpu.
     onUpdate: (() => {
       let frameCount = 0;
       let trackingLossFrames = 0;
@@ -509,18 +519,19 @@ function diagnosticsPipelineModule() {
 
         if (reality.trackingStatus === 'NORMAL' && !everReachedNormalTracking) {
           everReachedNormalTracking = true;
-          // Recién ahora es seguro anclar el origen del mundo contra una
-          // pose de tracking estable — habilitamos "Localizar" (no lo
-          // tocamos si ya está en medio de una localización/chequeo GPS).
+          // Only now is it safe to anchor the world origin against a
+          // stable tracking pose — we enable "Localize" (we don't
+          // touch it if already in the middle of a localization/GPS
+          // check).
           if (!localizing && !checkingLocation) {
             btnLocalize.disabled = false;
-            setStatus('Tracking estable. Tocá "Localizar" para corregir con MultiSet.');
+            setStatus('Tracking stable. Tap "Localize" to correct with MultiSet.');
           }
         }
 
-        // Guardado CADA frame (no solo cada 30) — esto es lo que usa
-        // captureImageFrame() para armar "imageN_data" en el momento exacto de
-        // cada captura, no el log de diagnóstico de más abajo.
+        // Saved EVERY frame (not just every 30) — this is what
+        // captureImageFrame() uses to build "imageN_data" at the exact
+        // moment of each capture, not the diagnostic log below.
         if (reality.position && reality.rotation) {
           latestRealityPose = {
             x: reality.position.x, y: reality.position.y, z: reality.position.z,
@@ -528,25 +539,28 @@ function diagnosticsPipelineModule() {
           };
         }
 
-        // Snapshot del frame de cámara crudo (píxeles + intrínsecos reales)
-        // para captureImageFrame(). Ambos requieren que CameraPixelArray haya
-        // corrido este frame (se registra en XR8Promise.then() más abajo,
-        // como XR8.CameraPixelArray.pipelineModule({maxDimension:1280})) — si
-        // todavía no tickeó ninguna vez, camerapixelarray es undefined acá y
-        // simplemente no actualizamos cameraData, dejando el valor anterior.
+        // Snapshot of the raw camera frame (pixels + real intrinsics)
+        // for captureImageFrame(). Both require CameraPixelArray to
+        // have run this frame (registered in XR8Promise.then() below,
+        // as XR8.CameraPixelArray.pipelineModule({maxDimension:1280}))
+        // — if it hasn't ticked once yet, camerapixelarray is
+        // undefined here and we simply don't update cameraData,
+        // leaving the previous value.
         const camerapixelarray = processGpuResult?.camerapixelarray;
         if (reality.intrinsics && camerapixelarray?.pixels) {
-          // OJO (fix 2026-07-24): los intrínsecos hay que calcularlos contra
-          // el tamaño REAL del buffer que vamos a mandar (camerapixelarray.
-          // cols/rows) y NO contra frameStartResult.textureWidth/Height (el
-          // tamaño de la textura GL nativa, antes de cualquier downsample).
-          // reality.intrinsics es una matriz de proyección normalizada
-          // (independiente de resolución) — fx/fy/px/py en PÍXELES solo
-          // salen bien si se escalan contra el ancho/alto de la imagen que
-          // efectivamente le llega a MultiSet. Con "maxDimension:1280" activo,
-          // cols/rows (post-downsample) puede ser bien distinto de
-          // textureWidth/Height (nativo) — antes esto pasaba desapercibido
-          // porque sin downsample ambos coincidían casi siempre.
+          // NOTE (fix 2026-07-24): intrinsics must be calculated
+          // against the REAL size of the buffer we'll send
+          // (camerapixelarray.cols/rows) and NOT against
+          // frameStartResult.textureWidth/Height (the native GL
+          // texture size, before any downsample).
+          // reality.intrinsics is a normalized projection matrix
+          // (resolution-independent) — fx/fy/px/py in PIXELS only
+          // come out right if scaled against the width/height of the
+          // image that actually reaches MultiSet. With
+          // "maxDimension:1280" active, cols/rows (post-downsample)
+          // can be quite different from textureWidth/Height (native)
+          // — before, this went unnoticed because without downsample
+          // both almost always coincided.
           cameraData.intrinsics = getIntrinsicsFromReality(reality.intrinsics, camerapixelarray.cols, camerapixelarray.rows);
           cameraData.width = camerapixelarray.cols;
           cameraData.height = camerapixelarray.rows;
@@ -566,7 +580,7 @@ function diagnosticsPipelineModule() {
         if (reality.trackingStatus === 'LIMITED') {
           trackingLossFrames++;
           if (trackingLossFrames === TRACKING_LOSS_FRAMES_THRESHOLD && hasLocalizedOnce && !localizing) {
-            console.warn('⚠️ Tracking LIMITED sostenido (~2s) — relocalizando automáticamente con MultiSet.');
+            console.warn('⚠️ Sustained LIMITED tracking (~2s) — auto-relocalizing with MultiSet.');
             captureAndLocalize();
           }
         } else {
@@ -577,45 +591,45 @@ function diagnosticsPipelineModule() {
   };
 }
 
-// ─── Fase 2: puente con MultiSet — módulo de pipeline de cámara ───────────────
-// Guía directa del equipo de 8th Wall (respuesta oficial a una consulta sobre
-// integrar un VPS externo, ya usado antes por otro cliente): "Registrá un
-// módulo de pipeline de cámara. Agarrá un frame, mandalo a tu backend, y si
-// se detecta la posición, actualizá el tracking." Ciclo de vida documentado
+// ─── Phase 2: MultiSet bridge — camera pipeline module ────────────────────────
+// Direct guidance from the 8th Wall team (official response to a query about
+// integrating an external VPS, already used before by another client):
+// "Register a camera pipeline module. Grab a frame, send it to your backend,
+// and if the position is detected, update the tracking." Documented lifecycle
 // (8thwall.org/docs/api/engine/camerapipelinemodule):
 //   onBeforeRun → onCameraStatusChange → onStart → onAttach
 //     → onProcessGpu → onProcessCpu → onUpdate → onRender
-// onProcessCpu es el punto documentado para "leer resultados de
-// procesamiento y devolver datos utilizables" — sería el lugar canónico para
-// leer processGpuResult.camerapixelarray. PERO ya confirmamos en este
-// proyecto, con xrweb (A-Frame), que un onProcessCpu propio no dispara de
-// forma confiable (0 requests reales llegando a MultiSet cuando se probó
-// antes con la captura vía CanvasScreenshot). Por eso el snapshot del frame
-// crudo (cameraData, más abajo) se lee en onUpdate en vez de onProcessCpu —
-// ver diagnosticsPipelineModule() más arriba: ESE onUpdate sí dispara
-// confiable (es lo que ya sostiene el log de reality.trackingStatus), y
-// según el ciclo de vida documentado processGpuResult (con
-// camerapixelarray ya poblado por XR8.CameraPixelArray, que corre ANTES en
-// la misma fase onProcessGpu) sigue disponible ahí, no solo en onProcessCpu.
+// onProcessCpu is the documented point for "reading processing results and
+// returning usable data" — it would be the canonical place to read
+// processGpuResult.camerapixelarray. BUT we already confirmed in this
+// project, with xrweb (A-Frame), that a custom onProcessCpu doesn't fire
+// reliably (0 real requests reaching MultiSet when tried previously with
+// CanvasScreenshot capture). That's why the raw frame snapshot (cameraData,
+// below) is read in onUpdate instead of onProcessCpu — see
+// diagnosticsPipelineModule() above: THAT onUpdate does fire reliably
+// (it's what already sustains the reality.trackingStatus log), and per the
+// documented lifecycle processGpuResult (with camerapixelarray already
+// populated by XR8.CameraPixelArray, which runs EARLIER in the same
+// onProcessGpu phase) remains available there, not only in onProcessCpu.
 //
-// El disparo real de una localización (captureAndLocalize) sigue sin vivir
-// dentro de ningún hook del pipeline — se llama directo desde el tap del
-// botón, el timer de fondo, o la pérdida de tracking sostenida. Mismo patrón
-// que @multisetai/vps (SDK oficial, WebXR puro, confirmado funcionando): el
-// botón "Localizar" llama directo `await adapter.localizeFrame()` en el
-// mismo click handler, sin ninguna indirección por frame.
+// The actual localization trigger (captureAndLocalize) still doesn't live
+// inside any pipeline hook — it's called directly from the button tap, the
+// background timer, or sustained tracking loss. Same pattern as
+// @multisetai/vps (official SDK, pure WebXR, confirmed working): the
+// "Localize" button calls `await adapter.localizeFrame()` directly in the
+// click handler, without any per-frame indirection.
 let localizing = false;
 
-// Último frame de cámara crudo disponible, actualizado cada frame por
-// diagnosticsPipelineModule().onUpdate a partir de CameraPixelArray +
-// reality.intrinsics — reemplaza la captura anterior por
-// XR8.CanvasScreenshot.takeScreenshot() (un JPEG del <canvas> ya renderizado,
-// con el overlay 3D encima) e intrinsics.fx/fy estimados por FOV. Acá
-// "buffer" es el buffer RGBA (4 canales, 8 bits) que entrega
-// CameraPixelArray({maxDimension:1280}) — el sensor de la cámara a color, sin
-// nada dibujado encima — e "intrinsics" son los reales que reporta el SLAM
-// nativo de 8th Wall (no una aproximación). null hasta que CameraPixelArray
-// tickee por primera vez.
+// Latest raw camera frame available, updated every frame by
+// diagnosticsPipelineModule().onUpdate from CameraPixelArray +
+// reality.intrinsics — replaces the previous capture via
+// XR8.CanvasScreenshot.takeScreenshot() (a JPEG of the already-rendered
+// <canvas>, with the 3D overlay on top) and intrinsics.fx/fy estimated
+// from FOV. Here "buffer" is the RGBA buffer (4 channels, 8 bits)
+// delivered by CameraPixelArray({maxDimension:1280}) — the camera
+// sensor in color, with nothing drawn on top — and "intrinsics" are the
+// real ones reported by 8th Wall's native SLAM (not an approximation).
+// null until CameraPixelArray ticks for the first time.
 const cameraData = {
   width: 0,
   height: 0,
@@ -623,15 +637,15 @@ const cameraData = {
   intrinsics: null,
 };
 
-// Fórmula EXACTA del módulo oficial de Immersal (immersal-module.js,
-// getIntrinsics / immersal/index.js) para derivar fx/fy/px/py a partir de la
-// matriz de proyección que el SLAM nativo ya calcula cuadro a cuadro
-// (reality.intrinsics) — reales, no una estimación por el FOV de la cámara
-// virtual de THREE.js como se hacía antes. m[5] es la escala focal en Y;
-// m[8]/m[9] el offset del punto principal en NDC (-1..1), reescalado a
-// píxeles de la textura. Asume fx=fy (píxeles cuadrados) porque
-// reality.intrinsics no expone un valor separado para X — mismo supuesto que
-// hace Immersal con esta misma fórmula.
+// EXACT formula from the official Immersal module (immersal-module.js,
+// getIntrinsics / immersal/index.js) to derive fx/fy/px/py from the
+// projection matrix that the native SLAM already computes frame by frame
+// (reality.intrinsics) — real values, not an estimate from the THREE.js
+// virtual camera's FOV as done before. m[5] is the focal scale in Y;
+// m[8]/m[9] the principal point offset in NDC (-1..1), rescaled to
+// texture pixels. Assumes fx=fy (square pixels) because
+// reality.intrinsics doesn't expose a separate value for X — same
+// assumption Immersal makes with this same formula.
 function getIntrinsicsFromReality(m, textureWidth, textureHeight) {
   const fl = 0.5 * m[5] * textureHeight;
   const px = 0.5 * (m[8] + 1.0) * textureWidth;
@@ -639,49 +653,50 @@ function getIntrinsicsFromReality(m, textureWidth, textureHeight) {
   return { fx: fl, fy: fl, px, py };
 }
 
-// Encoding JPEG a color (2026-07-24, reemplaza el PNG en escala de grises de
-// src/png-worker.js) — copiado del SDK WebXR de referencia
-// (@multisetai/vps/dist/three/index.js, función ne()): un <canvas> 2D normal
-// (no OffscreenCanvas) en el hilo principal, mismo mecanismo que usa esa
-// función de referencia (que TAMPOCO usa worker para esto). Se descartó
-// mantenerlo en un worker: OffscreenCanvas.convertToBlob no tiene soporte
-// confiable en iOS Safari (requisito duro de este proyecto, ver comentarios
-// de arquitectura del proyecto), y canvas.toBlob del hilo principal es
-// universal — el costo de encoding en sí es bajo (una sola imagen JPEG de
-// hasta 1280px, no cada frame).
+// Color JPEG encoding (2026-07-24, replaces the grayscale PNG from
+// src/png-worker.js) — copied from the reference WebXR SDK
+// (@multisetai/vps/dist/three/index.js, function ne()): a normal 2D
+// <canvas> (not OffscreenCanvas) on the main thread, same mechanism
+// that reference function uses (which also does NOT use a worker for
+// this). Keeping it in a worker was discarded: OffscreenCanvas.
+// convertToBlob doesn't have reliable support on iOS Safari (a hard
+// requirement for this project, see project architecture comments),
+// and main-thread canvas.toBlob is universal — the encoding cost
+// itself is low (a single JPEG image up to 1280px, not every frame).
 //
-// Reusamos el mismo <canvas> entre capturas (igual que el patrón de
-// fallbackCanvas más arriba) en vez de crear uno nuevo por foto.
+// We reuse the same <canvas> between captures (same pattern as
+// fallbackCanvas above) instead of creating a new one per photo.
 const jpegCanvas = document.createElement('canvas');
 const jpegCtx = jpegCanvas.getContext('2d');
-const JPEG_QUALITY = 0.7; // mismo valor que usa el SDK de referencia
+const JPEG_QUALITY = 0.7; // same value the reference SDK uses
 
 function encodeJpegFrame(rgbaBuffer, width, height) {
   jpegCanvas.width = width;
   jpegCanvas.height = height;
-  // CameraPixelArray entrega Uint8Array; ImageData exige Uint8ClampedArray
-  // específicamente — el constructor de abajo copia a la vez que convierte
-  // de tipo, evitando además que putImageData lea un buffer que XR8 podría
-  // seguir escribiendo en frames futuros.
+  // CameraPixelArray delivers Uint8Array; ImageData specifically
+  // requires Uint8ClampedArray — the constructor below copies and
+  // converts type simultaneously, also preventing putImageData from
+  // reading a buffer that XR8 might keep writing to in future frames.
   const imageData = new ImageData(new Uint8ClampedArray(rgbaBuffer), width, height);
   jpegCtx.putImageData(imageData, 0, 0);
   return new Promise((resolve, reject) => {
     jpegCanvas.toBlob(
-      (blob) => (blob ? blob.arrayBuffer().then(resolve, reject) : reject(new Error('canvas.toBlob devolvió null'))),
+      (blob) => (blob ? blob.arrayBuffer().then(resolve, reject) : reject(new Error('canvas.toBlob returned null'))),
       'image/jpeg',
       JPEG_QUALITY
     );
   });
 }
 
-// Snapshot + encoding de un frame para mandar a MultiSet. El snapshot de
-// cameraData.buffer y de latestRealityPose se toma ACÁ, de forma síncrona,
-// antes del primer await (new Uint8ClampedArray(rgbaBuffer) dentro de
-// encodeJpegFrame ya copia el buffer, así que lo que sigue escribiendo XR8 en
-// cameraData.buffer en frames futuros no afecta esta captura en curso).
+// Snapshot + encoding of a frame to send to MultiSet. The snapshot of
+// cameraData.buffer and latestRealityPose is taken HERE, synchronously,
+// before the first await (new Uint8ClampedArray(rgbaBuffer) inside
+// encodeJpegFrame already copies the buffer, so what XR8 keeps writing
+// to cameraData.buffer in future frames doesn't affect this capture
+// in progress).
 async function captureImageFrame() {
   if (!cameraData.buffer || !cameraData.intrinsics) {
-    throw new Error('Todavía no hay un frame de cámara disponible (CameraPixelArray no tickeó aún).');
+    throw new Error('No camera frame available yet (CameraPixelArray has not ticked).');
   }
   const { buffer, width, height, intrinsics } = cameraData;
   const localPose = latestRealityPose;
@@ -689,36 +704,37 @@ async function captureImageFrame() {
   return { jpegBuffer, width, height, intrinsics, localPose };
 }
 
-// Última pose LOCAL de tracking (SLAM propio de XR8, no la respuesta de
-// MultiSet) — actualizada cada frame por diagnosticsPipelineModule().onUpdate.
-// La usa captureMultiImageFrames() para armar "imageN_data" de cada foto en
-// el modo multi-image. Ya en la forma {x,y,z,qx,qy,qz,qw} que pide ese campo
-// (ver comentario en multiset-client.js sobre el prefijo "q" en la rotación).
+// Latest LOCAL tracking pose (XR8's own SLAM, not MultiSet's response)
+// — updated every frame by diagnosticsPipelineModule().onUpdate.
+// Used by captureMultiImageFrames() to build "imageN_data" for each
+// photo in multi-image mode. Already in the {x,y,z,qx,qy,qz,qw}
+// format that field requires (see comment in multiset-client.js about
+// the "q" prefix in rotation).
 let latestRealityPose = null;
 
-// Última pose conocida (en el mismo sistema RHS que pedimos con
-// isRightHanded:true) — se usa para armar el "hintPosition" del próximo
-// query y acelerar/mejorar la relocalización. null hasta la primera
-// localización exitosa.
+// Last known pose (in the same RHS system we request with
+// isRightHanded:true) — used to build the "hintPosition" for the next
+// query and speed up/improve relocalization. null until the first
+// successful localization.
 let lastKnownPosition = null;
 
-// true recién después de la primera corrección aplicada con éxito. Gatea
-// dos cosas que no tiene sentido disparar antes de eso: la relocalización
-// automática por pérdida de tracking (arriba) y el arranque del timer de
-// relocalización periódica (abajo) — ambas asumen que ya hay una pose de
-// referencia real, no la posición default de arranque del SLAM.
+// true only after the first successfully applied correction. Gates
+// two things that don't make sense before that: the automatic
+// relocalization on tracking loss (above) and the start of the
+// periodic relocalization timer (below) — both assume there's already
+// a real reference pose, not the default SLAM startup position.
 let hasLocalizedOnce = false;
 
-// ─── Relocalización periódica en segundo plano ─────────────────────────────
-// Réplica directa de startBackgroundLocalization() del SDK oficial
-// (@multisetai/vps): confirmado en su bundle que corre un setInterval que
-// llama a localizeFrame() (si no hay una localización en curso), con el
-// intervalo clamped entre 10s y 180s (default 30s para mapas). O sea: el SDK
-// "que funciona perfecto" tampoco confía solo en el tracking nativo
-// (ARCore/ARKit) para mantenerse anclado — también corrige periódicamente
-// contra el VPS. Acá replicamos el mismo patrón porque nuestra brecha
-// principal frente a esa versión era justamente no tener ningún re-anclaje
-// después del tap manual inicial.
+// ─── Periodic background relocalization ─────────────────────────────────────
+// Direct replica of startBackgroundLocalization() from the official SDK
+// (@multisetai/vps): confirmed in its bundle that it runs a setInterval
+// that calls localizeFrame() (if no localization is in progress), with
+// the interval clamped between 10s and 180s (default 30s for maps).
+// Meaning: the SDK "that works perfectly" also doesn't rely solely on
+// native tracking (ARCore/ARKit) to stay anchored — it also corrects
+// periodically against the VPS. We replicate the same pattern here
+// because our main gap versus that version was precisely having no
+// re-anchoring after the initial manual tap.
 const BG_INTERVAL_MIN_S = 10;
 const BG_INTERVAL_MAX_S = 180;
 const BG_INTERVAL_DEFAULT_S = 30;
@@ -743,8 +759,8 @@ function stopBackgroundLocalization() {
   }
 }
 
-// Relocalización de fondo automática: ya no se puede pausar (el botón fue removido).
-// Si se requiere deshabilitarla en el futuro, se puede comentar la llamada a startBackgroundLocalization().
+// Background auto-relocalization: can no longer be paused (button was removed).
+// To disable it in the future, comment out the call to startBackgroundLocalization().
 const bgLocalizationPaused = false;
 
 cubeScaleSlider.addEventListener('input', (e) => {
@@ -752,15 +768,16 @@ cubeScaleSlider.addEventListener('input', (e) => {
   arCube.setAttribute('scale', `${scale} ${scale} ${scale}`);
 });
 
-// ─── Umbral de confianza ────────────────────────────────────────────────────
-// Otra técnica confirmada en el bundle del SDK oficial: confidenceCheck +
-// confidenceThreshold, clamped entre 0.2 y 0.8 (default 0.5) — si la pose
-// devuelta tiene menos confianza que el umbral, el SDK la descarta en vez de
-// aplicarla. Tiene sentido acá: en las pruebas reales vimos confianzas de
-// 43% a 85%; aplicar sin filtrar una corrección de 43% puede meter una
-// posición peor que la que ya había (y verse como "el cubo saltó a un lugar
-// raro"), sobre todo viniendo de una relocalización periódica automática
-// donde no hay un usuario apuntando deliberadamente la cámara al mapa.
+// ─── Confidence threshold ───────────────────────────────────────────────────
+// Another technique confirmed in the official SDK bundle:
+// confidenceCheck + confidenceThreshold, clamped between 0.2 and 0.8
+// (default 0.5) — if the returned pose has less confidence than the
+// threshold, the SDK discards it instead of applying it. Makes sense
+// here: in real-world tests we saw confidences from 43% to 85%;
+// applying an unfiltered 43% correction can introduce a worse position
+// than the current one (and appear as "the cube jumped somewhere
+// weird"), especially from an automatic background relocalization where
+// the user isn't deliberately pointing the camera at the map.
 const CONFIDENCE_THRESHOLD_MIN = 0.2;
 const CONFIDENCE_THRESHOLD_MAX = 0.8;
 const CONFIDENCE_THRESHOLD_DEFAULT = 0.5;
@@ -769,20 +786,21 @@ const CONFIDENCE_THRESHOLD = Math.max(
   Math.min(Number(import.meta.env.VITE_MULTISET_CONFIDENCE_THRESHOLD) || CONFIDENCE_THRESHOLD_DEFAULT, CONFIDENCE_THRESHOLD_MAX)
 );
 
-// ─── Anclaje del mapa (reemplaza updateCameraProjectionMatrix) ─────────────
-// Antes, cada corrección de MultiSet reseteaba el origen/orientación de TODO
-// el sistema de tracking de XR8 vía updateCameraProjectionMatrix({origin,
-// facing}) — un salto duro de todo el mundo, sin versión "continua" ni
-// transición documentada. Migramos al patrón que usa el módulo oficial de
-// Immersal (immersal-module.js: localize() + su "pointCloud"): el tracking
-// nativo de XR8 NUNCA se toca. En cambio, calculamos la transformación entre
-// la pose del tracker en el momento exacto de la captura (trackerSpace,
-// sceneEl.camera.matrixWorld) y la pose que devuelve el VPS relativa al
-// origen del mapa (cloudSpace) — esa transformación es la que hay que
-// aplicarle a #map-anchor para que el CONTENIDO quede alineado con el mundo
-// real, sin resetear nada del SLAM. El tracking sigue su curso normal entre
-// correcciones, así que ya no hay drift acumulado por perder el anclaje del
-// origen — solo el contenido se realinea.
+// ─── Map anchoring (replaces updateCameraProjectionMatrix) ──────────────────
+// Previously, each MultiSet correction reset the origin/orientation of
+// the ENTIRE XR8 tracking system via updateCameraProjectionMatrix
+// ({origin, facing}) — a hard jump of the whole world, with no
+// documented "continuous" version or transition. We migrated to the
+// pattern used by the official Immersal module (immersal-module.js:
+// localize() + its "pointCloud"): the native XR8 tracking is NEVER
+// touched. Instead, we compute the transformation between the tracker
+// pose at the exact moment of capture (trackerSpace,
+// sceneEl.camera.matrixWorld) and the pose returned by the VPS relative
+// to the map origin (cloudSpace) — that transformation is what gets
+// applied to #map-anchor so the CONTENT aligns with the real world,
+// without resetting any SLAM state. Tracking continues its normal
+// course between corrections, so there's no accumulated drift from
+// losing the origin anchor — only the content gets realigned.
 function trackerFromCloudSpace(position, rotation, trackerSpace) {
   const cloudPosition = new THREE.Vector3(position.x, position.y, position.z);
   const cloudRotation = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
@@ -790,34 +808,35 @@ function trackerFromCloudSpace(position, rotation, trackerSpace) {
   return new THREE.Matrix4().multiplyMatrices(trackerSpace, cloudSpace.clone().invert());
 }
 
-// PoseFilter (ver src/pose-filter.js, puerto de Immersal): en vez de aplicar
-// cada corrección cruda, la acumulamos en un historial de 8 muestras que
-// promedia y descarta outliers — absorbe una localización puntual mala sin
-// que se note como salto.
+// PoseFilter (see src/pose-filter.js, port from Immersal): instead of
+// applying each raw correction, we accumulate it in a history of 8
+// samples that averages and discards outliers — absorbs a single bad
+// localization without it appearing as a jump.
 const poseFilter = new PoseFilter(THREE);
 
-// Umbrales de "warp directo" — si la corrección filtrada implica moverse más
-// de 5m o girar más de 20° respecto de donde está el ancla ahora, asumimos
-// que es un realineamiento real (no ruido) y saltamos directo en vez de
-// interpolar durante segundos hacia el lugar correcto. Mismos valores que
-// usa Immersal (warpThresholdDistSq/warpThresholdCosAngle en
-// immersal-module.js) — no hay una base empírica propia todavía para este
-// mapa puntual, pero son un punto de partida razonable.
+// "Direct warp" thresholds — if the filtered correction implies moving
+// more than 5m or rotating more than 20° from where the anchor
+// currently is, we assume it's a real realignment (not noise) and jump
+// directly instead of interpolating for seconds toward the correct
+// place. Same values Immersal uses (warpThresholdDistSq/
+// warpThresholdCosAngle in immersal-module.js) — there's no empirical
+// basis of our own yet for this particular map, but they're a
+// reasonable starting point.
 const WARP_THRESHOLD_DIST_SQ = 5.0 * 5.0;
 const WARP_THRESHOLD_COS_ANGLE = Math.cos((20.0 * Math.PI) / 180.0);
-// Factor de suavizado exponencial por frame (no por tiempo fijo como antes)
-// — mismo valor default que usa Immersal en su propio onRender.
+// Exponential smoothing factor per frame (not per fixed time as before)
+// — same default value Immersal uses in its own onRender.
 const POSE_SMOOTHING = 0.025;
 
 let poseLoopRunning = false;
 let prevPoseLoopTime = performance.now();
 
-// Loop continuo (no un tween de una sola corrección): persigue
-// poseFilter.position/rotation cuadro a cuadro, igual que el onRender de
-// Immersal. Arranca una sola vez, con la primera localización exitosa (ver
-// applyLocalizationResult), y sigue corriendo indefinidamente — así una
-// corrección de fondo (relocalización periódica) también se suaviza, no
-// solo la del tap manual inicial.
+// Continuous loop (not a one-shot tween for a single correction):
+// chases poseFilter.position/rotation frame by frame, just like
+// Immersal's onRender. Starts once, with the first successful
+// localization (see applyLocalizationResult), and keeps running
+// indefinitely — so a background correction (periodic relocalization)
+// also gets smoothed, not just the initial manual tap.
 function poseFilterTick(now) {
   if (!poseLoopRunning) return;
 
@@ -853,67 +872,67 @@ function stopPoseFilterLoop() {
   poseLoopRunning = false;
 }
 
-// Punto de entrada llamado desde captureAndLocalize() con cada pose aceptada
-// (ya pasó el umbral de confianza). trackerSpace es el snapshot tomado ANTES
-// de mandar la foto — ver el comentario en captureAndLocalize sobre por qué
-// no se puede usar la pose actual del tracker al momento en que llega la
-// respuesta.
+// Entry point called from captureAndLocalize() with each accepted pose
+// (already passed the confidence threshold). trackerSpace is the
+// snapshot taken BEFORE sending the photo — see the comment in
+// captureAndLocalize about why we can't use the tracker's current
+// pose at the time the response arrives.
 function applyLocalizationResult(pose, trackerSpace) {
   const m = trackerFromCloudSpace(pose.position, pose.rotation, trackerSpace);
   poseFilter.refinePose(m);
 
   if (poseFilter.sampleCount() === 1) {
-    // Primera corrección real: recién ahora el ancla tiene una
-    // transformación con sentido (antes era la identidad, apuntando a
-    // cualquier lado según el origen arbitrario del SLAM) — la mostramos y
-    // arrancamos el loop que la persigue cuadro a cuadro.
+    // First real correction: only now does the anchor have a
+    // meaningful transformation (before it was identity, pointing
+    // in an arbitrary direction per the SLAM's arbitrary origin) —
+    // we show it and start the loop that chases it frame by frame.
     mapAnchorEl.setAttribute('visible', true);
     startPoseFilterLoop();
   }
 }
 
-// REVISIÓN (2026-07-20): hintPosition tiene que ir en LHS (Unity), el mismo
-// sistema que usa la doc oficial "Find Hint Coordinates" (coordenadas
-// (x,y,z) tomadas directamente sobre el mesh del mapa, relativas al origen).
-// Nosotros pedimos la pose en RHS (isRightHanded:true, el sistema que usa
-// THREE.js/A-Frame), así que hay que convertir antes de mandarlo.
-// Para un vector de POSICIÓN (sin rotación) la conversión RHS<->LHS estándar
-// es invertir un solo eje — acá Z — lo cual es matemáticamente correcto y
-// suficiente (a diferencia de una matriz/quaternion de rotación, donde
-// además habría que invertir esa misma componente en la rotación; no aplica
-// acá porque hintPosition no lleva orientación).
-// Lo que SIGUE sin confirmar 1:1 es que el eje que MultiSet llama "Z" en su
-// LHS interno sea el mismo que nuestro "Z" en RHS antes del flip (podría
-// haber además un intercambio de ejes o una rotación de mapeo, no solo un
-// flip de signo) — la doc de MultiSet nunca necesita aclararlo porque su
-// flujo soportado (portal web / MapPointInspector en Unity) obtiene las
-// coordenadas ya en LHS, nunca parte de un sistema RHS a convertir.
-// TODO validar en dispositivo: capturar un punto conocido con el método
-// oficial de MultiSet (portal o Unity) y comparar contra el valor que
-// produce esta función para la misma posición física.
+// REVISION (2026-07-20): hintPosition must be in LHS (Unity), the same
+// system the official doc "Find Hint Coordinates" uses (coordinates
+// (x,y,z) taken directly on the map mesh, relative to the origin).
+// We request the pose in RHS (isRightHanded:true, the system
+// THREE.js/A-Frame uses), so we need to convert before sending.
+// For a POSITION vector (no rotation) the standard RHS↔LHS conversion
+// is inverting a single axis — here Z — which is mathematically
+// correct and sufficient (unlike a rotation matrix/quaternion, where
+// you'd also need to invert that same component in the rotation;
+// doesn't apply here because hintPosition has no orientation).
+// What REMAINS unconfirmed 1:1 is whether the axis MultiSet calls "Z"
+// in its internal LHS is the same as our "Z" in RHS before the flip
+// (there could also be an axis swap or a mapping rotation, not just a
+// sign flip) — MultiSet's docs never need to clarify this because
+// their supported flow (web portal / MapPointInspector in Unity)
+// obtains the coordinates already in LHS, never starting from RHS.
+// TODO: validate on device: capture a known point with MultiSet's
+// official method (portal or Unity) and compare against the value this
+// function produces for the same physical position.
 function toHintPositionString(rhsPosition) {
   return `${rhsPosition.x},${rhsPosition.y},${-rhsPosition.z}`;
 }
 
-// ─── Chequeo de proximidad GPS ─────────────────────────────────────────────
-// Antes de gastar cuota en un request real de vps/map/query, comparamos la
-// posición GPS del usuario contra el punto georeferenciado del mapa (ver
-// getMapLocation() en multiset-client.js). Si está lejos, ni intentamos
-// escanear: avisamos directo dónde tiene que acercarse.
+// ─── GPS proximity check ───────────────────────────────────────────────────
+// Before spending quota on a real vps/map/query request, we compare the
+// user's GPS position against the map's georeferenced point (see
+// getMapLocation() in multiset-client.js). If they're far away, we
+// don't even try to scan: we tell them directly where they need to go.
 //
-// OJO: la precisión de navigator.geolocation en un browser puede andar de
-// unos pocos metros (GPS puro, al aire libre) a 50-100+ metros (indoor, por
-// wifi/cell triangulation) — justo el escenario típico de un VPS indoor. El
-// umbral de abajo es generoso a propósito para no bloquear intentos válidos
-// por error de GPS; esto es un chequeo best-effort del lado del cliente, no
-// una garantía dura de proximidad — el chequeo real de "coincide o no" lo
-// sigue haciendo MultiSet contra la imagen.
+// NOTE: navigator.geolocation accuracy in a browser can range from a
+// few meters (pure GPS, outdoors) to 50-100+ meters (indoor, via
+// wifi/cell triangulation) — exactly the typical scenario for an indoor
+// VPS. The threshold below is generous on purpose to avoid blocking
+// valid attempts due to GPS error; this is a best-effort client-side
+// check, not a hard proximity guarantee — the real "does it match or
+// not" check is still done by MultiSet against the image.
 const MAX_DISTANCE_METERS = Number(import.meta.env.VITE_MAX_DISTANCE_METERS) || 150;
 
 function getCurrentPosition(timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error('Geolocalización no disponible en este navegador.'));
+      reject(new Error('Geolocation not available in this browser.'));
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -924,7 +943,7 @@ function getCurrentPosition(timeoutMs = 8000) {
   });
 }
 
-// Fórmula de Haversine — distancia en metros entre dos puntos lat/lon.
+// Haversine formula — distance in meters between two lat/lon points.
 function distanceMeters(a, b) {
   const R = 6371000;
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -939,23 +958,24 @@ let checkingLocation = false;
 
 btnLocalize.addEventListener('click', () => {
   if (localizing || checkingLocation) return;
-  // Defensivo: el botón ya queda disabled hasta everReachedNormalTracking
-  // (ver diagnosticsPipelineModule().onStart/onUpdate), esto es solo para no
-  // confiar ciegamente en el atributo DOM si algo lo pisara desde afuera.
+  // Defensive: the button is already disabled until
+  // everReachedNormalTracking (see
+  // diagnosticsPipelineModule().onStart/onUpdate), this is just to
+  // not blindly trust the DOM attribute if something overwrote it.
   if (!everReachedNormalTracking) return;
   checkProximityAndRequestLocalization();
 });
 
 async function checkProximityAndRequestLocalization() {
-  // En mock no hay mapa real georeferenciado contra el cual comparar —
-  // saltamos el chequeo para no romper el flujo de prueba local.
+  // In mock mode there's no real georeferenced map to compare against —
+  // skip the check to not break the local testing flow.
   if (MOCK_ENABLED) {
     captureAndLocalize();
     return;
   }
 
   checkingLocation = true;
-  setStatus('Verificando tu ubicación...');
+  setStatus('Checking your location...');
 
   try {
     const [userPos, mapPos] = await Promise.all([getCurrentPosition(), getMapLocation()]);
@@ -964,17 +984,17 @@ async function checkProximityAndRequestLocalization() {
     if (distance > MAX_DISTANCE_METERS) {
       confidenceBadge.style.display = 'none';
       setStatus(
-        'No ha sido posible escanearlo debido a que te encontrás muy lejos de la ubicación. '
-        + `Por favor acercate a (${mapPos.lat.toFixed(6)}, ${mapPos.lon.toFixed(6)}).`
+        'Could not scan because you are too far from the location. '
+        + `Please move closer to (${mapPos.lat.toFixed(6)}, ${mapPos.lon.toFixed(6)}).`
       );
       return;
     }
   } catch (err) {
-    // Fail-open: si no podemos confirmar la ubicación (GPS denegado, sin
-    // señal, mapa sin georeferenciar, etc.) dejamos pasar el intento en vez
-    // de bloquear la feature entera por un chequeo que es un extra, no el
-    // corazón del flujo.
-    console.warn('No se pudo verificar la proximidad GPS, se intenta localizar igual:', err);
+    // Fail-open: if we can't confirm the location (GPS denied, no
+    // signal, map not georeferenced, etc.) we let the attempt through
+    // instead of blocking the entire feature for a check that's an
+    // extra, not the core of the flow.
+    console.warn('Could not verify GPS proximity, attempting localization anyway:', err);
   } finally {
     checkingLocation = false;
   }
@@ -982,16 +1002,17 @@ async function checkProximityAndRequestLocalization() {
   await captureAndLocalize();
 }
 
-// Captura MULTI_IMAGE_COUNT frames en ráfaga para /vps/map/multi-image-query,
-// cada uno emparejado con la pose LOCAL de tracking (localPose, snapshot
-// tomado dentro de captureImageFrame) en el instante exacto de esa captura.
-// MULTI_IMAGE_DELAY_MS entre tomas: sin nada de por medio, dos capturas
-// seguidas pueden leer el mismo cameraData.buffer si CameraPixelArray no
-// tickeó un frame nuevo entre medio — la espera le da tiempo al pipeline, y
-// de paso da margen a que el usuario mueva apenas el teléfono entre tomas
-// (el sentido de mandar varias fotos es cubrir ángulos/detalle distintos, no
-// repetir la misma imagen 4 veces).
-const MULTI_IMAGE_COUNT = 4; // el schema real solo define image1..image4, no hasta 6 como dice el texto de la doc
+// Captures MULTI_IMAGE_COUNT frames in burst for
+// /vps/map/multi-image-query, each paired with the LOCAL tracking pose
+// (localPose, snapshot taken inside captureImageFrame) at the exact
+// instant of that capture. MULTI_IMAGE_DELAY_MS between shots: without
+// any gap, two consecutive captures may read the same
+// cameraData.buffer if CameraPixelArray hasn't ticked a new frame in
+// between — the wait gives the pipeline time, and also gives margin
+// for the user to slightly move the phone between shots (the point of
+// sending multiple photos is to cover different angles/detail, not to
+// repeat the same image 4 times).
+const MULTI_IMAGE_COUNT = 4; // the real schema only defines image1..image4, not up to 6 as the text says
 const MULTI_IMAGE_DELAY_MS = Number(import.meta.env.VITE_MULTISET_MULTI_IMAGE_DELAY_MS) || 200;
 
 async function captureMultiImageFrames() {
@@ -1006,15 +1027,15 @@ async function captureMultiImageFrames() {
 async function captureAndLocalize() {
   localizing = true;
   btnLocalize.disabled = true;
-  btnLocalize.textContent = 'Localizando...';
+  btnLocalize.textContent = 'Localizing...';
 
-  // Snapshot de la pose del tracker EN ESTE INSTANTE, antes de cualquier
-  // await — es la pose real de la cámara en el momento en que se toma la
-  // foto que le mandamos a MultiSet. Si en cambio leyéramos
-  // sceneEl.camera.matrixWorld recién cuando llega la respuesta del server
-  // (cientos de ms después), el teléfono ya se movió y trackerFromCloudSpace
-  // calcularía la transformación contra la pose equivocada — mismo principio
-  // que "const trackerSpace = camera.matrixWorld.clone()" en Immersal.
+  // Snapshot of the tracker pose AT THIS INSTANT, before any await —
+  // it's the real camera pose at the moment the photo we send to
+  // MultiSet is taken. If instead we read sceneEl.camera.matrixWorld
+  // only when the server response arrives (hundreds of ms later), the
+  // phone has already moved and trackerFromCloudSpace would compute
+  // the transformation against the wrong pose — same principle as
+  // "const trackerSpace = camera.matrixWorld.clone()" in Immersal.
   const trackerSpaceAtCapture = sceneEl.camera.matrixWorld.clone();
 
   try {
@@ -1022,15 +1043,15 @@ async function captureAndLocalize() {
     const hintPosition = lastKnownPosition ? toHintPositionString(lastKnownPosition) : undefined;
 
     if (MULTI_IMAGE_ENABLED) {
-      setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock, multi-imagen)...' : 'Capturando 4 fotos para MultiSet...');
+      setStatus(MOCK_ENABLED ? 'Localizing with MultiSet (mock, multi-image)...' : 'Capturing 4 photos for MultiSet...');
 
       const frames = await captureMultiImageFrames();
       const { width, height, intrinsics } = frames[0];
 
-      setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock)...' : 'Localizando con MultiSet (multi-imagen)...');
+      setStatus(MOCK_ENABLED ? 'Localizing with MultiSet (mock)...' : 'Localizing with MultiSet (multi-image)...');
       pose = await queryMultiImageLocalization(frames, intrinsics, { width, height }, hintPosition);
     } else {
-      setStatus(MOCK_ENABLED ? 'Localizando con MultiSet (mock)...' : 'Localizando con MultiSet...');
+      setStatus(MOCK_ENABLED ? 'Localizing with MultiSet (mock)...' : 'Localizing with MultiSet...');
 
       const frame = await captureImageFrame();
       pose = await queryLocalization(frame.jpegBuffer, frame.intrinsics, { width: frame.width, height: frame.height }, hintPosition);
@@ -1038,175 +1059,187 @@ async function captureAndLocalize() {
 
     if (!pose) {
       confidenceBadge.style.display = 'none';
-      setStatus('MultiSet: no se pudo localizar en este frame (mapa no reconocido).');
+      setStatus('MultiSet: could not localize in this frame (map not recognized).');
       return;
     }
 
-    // NO es GeoPose/WGS84: confirmado contra la doc oficial
-    // (multiset.gitbook.io/multiset/basics/localization/geopose-support) que
-    // eso requiere pasar "convertToGeoCoordinates: true" en el request de
-    // /vps/map/query — multiset-client.js no lo manda, así que la respuesta
-    // ya viene en coordenadas locales cartesianas: position {x,y,z} y
-    // rotation como cuaternión real {x,y,z,w} (confirmado con el ejemplo
-    // textual de la doc). Sin ángulos de Euler, sin matriz, sin conversión
-    // de por medio — se puede pasar directo a trackerFromCloudSpace().
+    // NOT GeoPose/WGS84: confirmed against the official docs
+    // (multiset.gitbook.io/multiset/basics/localization/geopose-support)
+    // that it requires passing "convertToGeoCoordinates: true" in the
+    // /vps/map/query request — multiset-client.js doesn't send it,
+    // so the response already comes in local Cartesian coordinates:
+    // position {x,y,z} and rotation as a real quaternion {x,y,z,w}
+    // (confirmed with the doc's text example). No Euler angles, no
+    // matrix, no conversion needed — can be passed directly to
+    // trackerFromCloudSpace().
     //
-    // Validación defensiva: si la respuesta viniera con position/rotation en
-    // una forma inesperada (campo faltante, no numérico), preferimos tirar
-    // un error visible acá antes que componer una matriz con undefined/NaN
-    // — eso produciría un mal posicionamiento silencioso, muy difícil de
-    // diagnosticar después.
+    // Defensive validation: if the response came with
+    // position/rotation in an unexpected shape (missing field, not
+    // numeric), we prefer to throw a visible error here rather than
+    // composing a matrix with undefined/NaN — that would produce a
+    // silent mispositioning, very hard to diagnose later.
     const hasVector3 = (v) => v && ['x', 'y', 'z'].every((k) => typeof v[k] === 'number');
     const hasQuaternion = (q) => q && ['w', 'x', 'y', 'z'].every((k) => typeof q[k] === 'number');
     if (!hasVector3(pose.position) || !hasQuaternion(pose.rotation)) {
-      throw new Error(`MultiSet devolvió position/rotation con forma inesperada: ${JSON.stringify(pose)}`);
+      throw new Error(`MultiSet returned position/rotation with unexpected shape: ${JSON.stringify(pose)}`);
     }
 
     const confidencePct = Math.round((pose.confidence || 0) * 100);
 
-    // Umbral de confianza (ver CONFIDENCE_THRESHOLD arriba): una pose de baja
-    // confianza puede ser peor que no corregir — la descartamos antes de
-    // meterla en el PoseFilter en vez de aplicarla a ciegas.
+    // Confidence threshold (see CONFIDENCE_THRESHOLD above): a
+    // low-confidence pose can be worse than not correcting — we
+    // discard it before feeding it into the PoseFilter instead of
+    // applying it blindly.
     if ((pose.confidence || 0) < CONFIDENCE_THRESHOLD) {
-      console.warn(`⚠️ MultiSet devolvió confianza ${confidencePct}% (mínimo ${Math.round(CONFIDENCE_THRESHOLD * 100)}%) — corrección descartada.`);
-      setStatus(`MultiSet: confianza demasiado baja (${confidencePct}%), se mantiene la posición actual.`);
-      confidenceBadge.textContent = `⚠️ Confianza baja (${confidencePct}%) — descartada`;
+      console.warn(`⚠️ MultiSet returned confidence ${confidencePct}% (minimum ${Math.round(CONFIDENCE_THRESHOLD * 100)}%) — correction discarded.`);
+      setStatus(`MultiSet: confidence too low (${confidencePct}%), keeping current position.`);
+      confidenceBadge.textContent = `⚠️ Low confidence (${confidencePct}%) — discarded`;
       confidenceBadge.style.display = 'block';
       return;
     }
 
-    // Log dedicado y en línea plana (no objeto anidado) a propósito: esto es
-    // lo que hay que comparar entre dos taps de "Localizar" hechos desde
-    // posiciones físicas distintas para diagnosticar un salto/teletransporte
-    // del cubo — el mensaje de más abajo ("MultiSet reconoció el mapa") solo
-    // mostraba el % de confianza a simple vista, con la pose completa
-    // escondida adentro de un objeto que en la consola visual (eruda) o en el
-    // texto copiado quedaba menos fácil de leer/diffear de un vistazo.
+    // Dedicated log in a flat line (not a nested object) on purpose:
+    // this is what needs to be compared between two "Localize" taps
+    // done from different physical positions to diagnose a cube
+    // jump/teleport — the message below ("MultiSet recognized the
+    // map") only showed the % confidence at a glance, with the full
+    // pose hidden inside an object that in the visual console (eruda)
+    // or in copied text was less easy to read/diff at a glance.
     console.log(
-      `📌 Pose de MultiSet — position: x=${pose.position.x.toFixed(4)}, y=${pose.position.y.toFixed(4)}, z=${pose.position.z.toFixed(4)} `
+      `📌 MultiSet pose — position: x=${pose.position.x.toFixed(4)}, y=${pose.position.y.toFixed(4)}, z=${pose.position.z.toFixed(4)} `
       + `| rotation: w=${pose.rotation.w.toFixed(4)}, x=${pose.rotation.x.toFixed(4)}, y=${pose.rotation.y.toFixed(4)}, z=${pose.rotation.z.toFixed(4)} `
-      + `| confianza=${confidencePct}%`
+      + `| confidence=${confidencePct}%`
     );
 
-    // applyLocalizationResult mete la corrección en el PoseFilter (absorbe
-    // outliers) y realinea #map-anchor — no el tracking de XR8. La primera
-    // vez, hace visible el ancla y arranca el loop que la persigue cuadro a
-    // cuadro (ver comentario junto a poseFilterTick más arriba).
+    // applyLocalizationResult feeds the correction into the
+    // PoseFilter (absorbs outliers) and realigns #map-anchor — not
+    // XR8's tracking. The first time, it makes the anchor visible
+    // and starts the loop that chases it frame by frame (see
+    // comment next to poseFilterTick above).
     applyLocalizationResult(pose, trackerSpaceAtCapture);
-    lastKnownPosition = { x: pose.position.x, y: pose.position.y, z: pose.position.z }; // para el hintPosition del próximo query
+    lastKnownPosition = { x: pose.position.x, y: pose.position.y, z: pose.position.z }; // for the next query's hintPosition
 
-    // A partir de la primera corrección real (no la default de arranque),
-    // habilitamos la relocalización automática por pérdida de tracking (ver
-    // diagnosticsPipelineModule) y arrancamos el timer de relocalización
-    // periódica — replicando startBackgroundLocalization() del SDK oficial.
+    // Starting from the first real correction (not the default
+    // startup one), we enable the automatic relocalization on
+    // tracking loss (see diagnosticsPipelineModule) and start
+    // the periodic relocalization timer — replicating
+    // startBackgroundLocalization() from the official SDK.
     if (!hasLocalizedOnce) {
       hasLocalizedOnce = true;
       if (!bgLocalizationPaused) startBackgroundLocalization();
     }
 
-    // Confirmación visible de que MultiSet reconoció el mapa que importaste
-    // (poseFound:true) — independiente de si el cubo se ve bien o no, esto
-    // confirma que el VPS efectivamente lo captó.
-    console.log(`✅ MultiSet reconoció el mapa — confianza ${confidencePct}%`, pose);
-    setStatus(`MultiSet: localizado (${confidencePct}%)`);
-    confidenceBadge.textContent = `✅ Mapa reconocido (${confidencePct}%)`;
+    // Visible confirmation that MultiSet recognized the imported
+    // map (poseFound:true) — independent of whether the cube looks
+    // right or not, this confirms the VPS effectively detected it.
+    console.log(`✅ MultiSet recognized the map — confidence ${confidencePct}%`, pose);
+    setStatus(`MultiSet: localized (${confidencePct}%)`);
+    confidenceBadge.textContent = `✅ Map recognized (${confidencePct}%)`;
     confidenceBadge.style.display = 'block';
   } catch (err) {
-    // No usamos showError acá: un fallo de localización no es fatal para la
-    // sesión AR (el tracking de XR8 sigue andando), a diferencia de un error
-    // del pipeline. Solo lo mostramos como diagnóstico.
-    console.error('Error consultando MultiSet:', err);
-    setStatus('Error de MultiSet: ' + err.message);
+    // We don't use showError here: a localization failure isn't
+    // fatal for the AR session (XR8 tracking keeps running),
+    // unlike a pipeline error. We just display it as diagnostics.
+    console.error('Error querying MultiSet:', err);
+    setStatus('MultiSet error: ' + err.message);
     confidenceBadge.style.display = 'none';
   } finally {
     localizing = false;
     btnLocalize.disabled = false;
-    btnLocalize.textContent = '📍 Localizar';
+    btnLocalize.textContent = '📍 Localize';
   }
 }
 
-// ─── Arranque del motor ─────────────────────────────────────────────────────────
-// XR8Promise ya resuelve apenas el script xr.js (cargado en index.html) termina
-// de inicializar window.XR8. A diferencia de la versión Three.js manual, ya NO
-// llamamos XR8.run() nosotros — eso lo maneja xrweb/xrconfig internamente,
-// disparado por el evento "runreality" (ver más abajo). Acá solo registramos
-// nuestros módulos propios (no tienen equivalente declarativo en A-Frame) y
-// dejamos todo listo para cuando el usuario toque el botón.
+// ─── Engine startup ──────────────────────────────────────────────────────────
+// XR8Promise resolves as soon as the xr.js script (loaded in index.html)
+// finishes initializing window.XR8. Unlike the manual Three.js version,
+// we no longer call XR8.run() ourselves — xrweb/xrconfig handles that
+// internally, triggered by the "runreality" event (see below). Here we
+// only register our custom modules (which have no declarative equivalent
+// in A-Frame) and get everything ready for when the user taps the button.
 XR8Promise.then((XR8) => {
-  xr8Instance = XR8; // lo necesita triggerFallback() para pausar el motor
+  xr8Instance = XR8; // needed by triggerFallback() to pause the engine
 
-  // Chequeo de compatibilidad ANTES de mostrar "Iniciar AR". Mismo config
-  // (allowedDevices: mobile-and-headsets) que usa xrconfig por default —
-  // si el dispositivo/navegador no lo cumple, ni mostramos el botón: vamos
-  // directo al fallback (visor 3D), la misma pantalla que ya usamos cuando
-  // el GPU no aguanta el SLAM. Sin esto, un usuario en un navegador no
-  // soportado tocaría "Iniciar AR" y recién ahí vería fallar algo.
+  // Compatibility check BEFORE showing "Start AR". Same config
+  // (allowedDevices: mobile-and-headsets) that xrconfig uses by
+  // default — if the device/browser doesn't meet it, we don't even
+  // show the button: we go directly to the fallback (3D viewer), the
+  // same screen we already use when the GPU can't handle SLAM.
+  // Without this, a user on an unsupported browser would tap "Start
+  // AR" and only then see something fail.
   const isCompatible = XR8.XrDevice.isDeviceBrowserCompatible({
     allowedDevices: XR8.XrConfig.device().MOBILE_AND_HEADSETS,
   });
   if (!isCompatible) {
-    triggerFallback('Dispositivo o navegador no compatible con AR');
+    triggerFallback('Device or browser not compatible with AR');
     return;
   }
 
-  // Agregamos los atributos xrconfig/xrweb/xrextras-* recién ACÁ, no en el
-  // HTML estático — ver el comentario largo junto a <a-scene> en index.html.
-  // Resumen: si estos atributos ya están en el HTML cuando xr.js carga,
-  // "AFRAME.registerComponent('xrweb', ...)" dispara el init del componente
-  // en el acto, en un punto donde xr.js todavía no terminó de asignar el
-  // global "XR8" que el componente necesita — tira "ReferenceError: XR8 is
-  // not defined". Seteando los atributos acá, con XR8Promise ya resuelto,
-  // ese global está garantizado completo.
+  // We add the xrconfig/xrweb/xrextras-* attributes HERE, not in
+  // the static HTML — see the long comment next to <a-scene> in
+  // index.html. Summary: if these attributes are already in the HTML
+  // when xr.js loads, "AFRAME.registerComponent('xrweb', ...)"
+  // fires the component init immediately, at a point where xr.js
+  // hasn't finished assigning the "XR8" global that the component
+  // needs — throws "ReferenceError: XR8 is not defined". Setting
+  // them here, with XR8Promise already resolved, guarantees that
+  // global is complete.
   //
-  // "landing-page" NO se agrega a propósito: es el componente que muestra
-  // la pantalla "Scan or visit ... to continue" con branding de 8th Wall
-  // (confirmado en public/landing-page/landing-page.js — defaultParameters
-  // trae ese texto hardcodeado). Ya cubrimos su función real (avisar si el
-  // dispositivo no es compatible) arriba, con nuestra propia UI.
+  // "landing-page" is NOT added on purpose: it's the component that
+  // shows the "Scan or visit ... to continue" screen with 8th Wall
+  // branding (confirmed in public/landing-page/landing-page.js —
+  // defaultParameters has that text hardcoded). We already cover its
+  // real function (warning if the device is incompatible) above,
+  // with our own UI.
   sceneEl.setAttribute('xrconfig', 'delayRun: true');
   sceneEl.setAttribute('xrweb', 'scale: absolute');
   sceneEl.setAttribute('xrextras-runtime-error', '');
 
-  // CameraPixelArray SÍ hay que agregarlo a mano — a diferencia de
-  // CanvasScreenshot (que la integración A-Frame de XR8 ya agrega sola),
-  // este no es parte del set que arma xrweb por default: es opt-in porque
-  // tiene un costo de CPU real (lee de vuelta la textura de GPU cada frame).
-  // Config (2026-07-24, copiado del SDK WebXR de referencia —
-  // @multisetai/vps/dist/three/index.js, función N() — que manda JPEG a
-  // color y confirmó ser el que mejor trackea/reconoce contra MultiSet):
-  //   - Sin "luminance": default false → RGBA color, no 1 canal (antes
-  //     mandábamos escala de grises, una suposición no validada — ver el
-  //     TODO que había en multiset-client.js).
-  //   - "maxDimension: 1280": downsample en GPU (antes de leer los píxeles)
-  //     al mismo límite que usa el SDK de referencia
-  //     (Math.min(1, 1280/Math.max(w,h)) en su función N()) — evita mandar
-  //     fotos de 4K+ innecesariamente pesadas para el matching visual.
-  // Se registra ANTES de nuestro módulo para que, aunque no sería
-  // estrictamente necesario dado que onProcessGpu corre completo para todos
-  // los módulos antes de que empiece onUpdate para cualquiera, el orden
-  // quede igual al que usa el propio ejemplo de Immersal (de donde viene el
-  // resto del pipeline de captura).
+  // CameraPixelArray DOES need to be added manually — unlike
+  // CanvasScreenshot (which XR8's A-Frame integration adds
+  // automatically), this is not part of the default set xrweb sets
+  // up: it's opt-in because it has a real CPU cost (reads back the
+  // GPU texture every frame).
+  // Config (2026-07-24, copied from the reference WebXR SDK —
+  // @multisetai/vps/dist/three/index.js, function N() — which sends
+  // color JPEG and confirmed to be the one with the best tracking/
+  // recognition against MultiSet):
+  //   - Without "luminance": default false → RGBA color, not 1
+  //     channel (we previously sent grayscale, an unvalidated
+  //     assumption — see the TODO that was in multiset-client.js).
+  //   - "maxDimension: 1280": GPU downsample (before reading pixels)
+  //     to the same limit the reference SDK uses
+  //     (Math.min(1, 1280/Math.max(w,h)) in its function N()) —
+  //     avoids sending unnecessarily heavy 4K+ photos for visual
+  //     matching.
+  // Registered BEFORE our module so that, although not strictly
+  // necessary since onProcessGpu runs completely for all modules
+  // before onUpdate starts for any of them, the order matches what
+  // the Immersal example itself uses (from which the rest of the
+  // capture pipeline comes).
   XR8.addCameraPipelineModule(XR8.CameraPixelArray.pipelineModule({ maxDimension: 1280 }));
   XR8.addCameraPipelineModule(diagnosticsPipelineModule());
 
   btnStartAR.disabled = false;
 
-  // IMPORTANTE: emitimos "runreality" de forma síncrona dentro del handler de
-  // click, sin ningún await antes, para preservar el gesto de usuario — si no,
-  // iOS Safari puede negar el permiso de cámara en silencio (mismo principio
-  // que ya aplicábamos con XR8.run() en la versión anterior). xrconfig tiene
-  // que tener "delayRun: true" en el HTML para que la cámara no arranque sola
-  // al cargar la escena — ver comentario junto a <a-scene> en index.html.
+  // IMPORTANT: we emit "runreality" synchronously inside the click
+  // handler, without any await before it, to preserve the user
+  // gesture — otherwise iOS Safari may silently deny the camera
+  // permission (same principle we already applied with XR8.run() in
+  // the previous version). xrconfig must have "delayRun: true" in
+  // the HTML so the camera doesn't start automatically when the
+  // scene loads — see comment next to <a-scene> in index.html.
   btnStartAR.addEventListener('click', () => {
     btnStartAR.disabled = true;
-    btnStartAR.textContent = 'Iniciando...';
+    btnStartAR.textContent = 'Starting...';
 
-    // El permiso de GPS se pide ACÁ (gesto de usuario de "Iniciar AR"), no en
-    // "Localizar" — no bloqueamos el arranque de AR esperando la respuesta,
-    // solo disparamos el prompt del navegador ahora. Así, cuando más tarde
-    // el usuario toque "Localizar", el permiso ya está resuelto y
-    // getCurrentPosition() en checkProximityAndRequestLocalization() no
-    // interrumpe ese flujo con un prompt a mitad de camino.
+    // The GPS permission is requested HERE (user gesture from "Start
+    // AR"), not in "Localize" — we don't block the AR start waiting
+    // for the response, just trigger the browser prompt now. This
+    // way, when the user later taps "Localize", the permission is
+    // already resolved and getCurrentPosition() in
+    // checkProximityAndRequestLocalization() doesn't interrupt that
+    // flow with a prompt mid-way.
     if (!MOCK_ENABLED && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(() => { }, () => { }, { enableHighAccuracy: true, timeout: 8000 });
     }
@@ -1215,12 +1248,12 @@ XR8Promise.then((XR8) => {
       sceneEl.emit('runreality');
       landing.style.display = 'none';
       btnDebugToggleView.style.display = 'block';
-      setStatus('Cargando motor y cámara...');
+      setStatus('Loading engine and camera...');
     } catch (error) {
-      showError('No se pudo iniciar XR8:', error);
+      showError('Could not start XR8:', error);
     }
   });
 }).catch((err) => {
-  console.error('No se pudo cargar el motor 8th Wall:', err);
-  setStatus('Error al cargar el motor 8th Wall.');
+  console.error('Could not load the 8th Wall engine:', err);
+  setStatus('Error loading the 8th Wall engine.');
 });

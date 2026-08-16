@@ -1,22 +1,10 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>XR8 — Motor 8th Wall (prueba)</title>
+  <title>XR8 — 8th Wall Engine (test)</title>
 
-  <!--
-    A-Frame: tiene que cargar (síncrono, sin async/defer) ANTES que xr.js, y
-    A-Frame mismo pide que su <script> esté en <head> (si no, tira un warning
-    "Put the A-Frame <script> tag in the <head>..."). xr.js es <script
-    async> — puede ejecutar en cualquier momento, y el componente "xrweb" se
-    autoregistra mirando si window.AFRAME ya existe en ese momento ("On 8th
-    Wall Web script load, this component will be registered automatically
-    if it is detected that A-Frame has loaded"). Si este script cargara
-    después, xrweb nunca se registraría. Copiado a public/aframe/ por
-    scripts/copy-xr8-assets.mjs.
-  -->
-  <script src="/aframe/aframe.min.js"></script>
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -66,7 +54,7 @@
       color: #fff;
     }
 
-    /* ── HUD durante AR: botón de localización manual ── */
+    /* ── HUD during AR: manual localization button ── */
     #hud {
       display: none;
       position: fixed;
@@ -95,7 +83,7 @@
       font-weight: 600;
     }
 
-    /* ── Texto de estado durante AR ── */
+    /* ── Status text during AR ── */
     #status-text {
       display: none;
       position: fixed;
@@ -107,7 +95,7 @@
       padding: 8px 16px;
     }
 
-    /* ── Badge: MultiSet reconoció el mapa ── */
+    /* ── Badge: MultiSet recognized the map ── */
     #confidence-badge {
       display: none;
       position: fixed;
@@ -122,7 +110,7 @@
       font-weight: 700;
     }
 
-    /* ── Botón de testeo: alternar cámara/AR ↔ visor 3D ── */
+    /* ── Test button: toggle camera/AR ↔ 3D viewer ── */
     #btn-debug-toggle-view {
       position: fixed;
       top: 16px;
@@ -138,18 +126,8 @@
       border: 1px solid rgba(255, 255, 255, 0.3);
     }
 
-    /* ── Ocultar el botón nativo "Enter VR" de A-Frame ──
-       vr-mode-ui="enabled: false" en <a-scene> debería alcanzar, pero en
-       vivo confirmé que el botón .a-enter-vr igual aparece (visible,
-       display:block) — sospecho que tiene que ver con que xrconfig/xrweb se
-       agregan por JS después del load inicial de la escena (ver
-       XR8Promise.then() en src/main.js) y eso reinicializa el sistema
-       vr-mode-ui ignorando el "enabled:false" ya aplicado. En vez de perder
-       tiempo diagnosticando el porqué exacto dentro del motor cerrado, lo
-       tapamos por CSS — no tenemos ningún caso de uso para VR con visor acá. */
-    .a-enter-vr { display: none !important; }
 
-    /* ── Fallback: dispositivo sin tracking estable → vista 3D sin AR ── */
+    /* ── Fallback: device without stable tracking → 3D view without AR ── */
     #fallback-viewer {
       display: none;
       position: fixed;
@@ -178,149 +156,85 @@
 </head>
 <body>
 
-  <!--
-    Escena A-Frame — OJO: xrconfig/xrweb/xrextras-* NO van como atributos
-    acá en el HTML estático. Encontramos una carrera real dentro del propio
-    xr.js: "AFRAME.registerComponent('xrweb', ...)" corre en cuanto xr.js
-    carga, y si el atributo xrweb ya está presente en el HTML en ese
-    momento, A-Frame intenta inicializar el componente EN EL ACTO — pero el
-    código interno de ese componente referencia el global "XR8" a secas
-    (no "window.XR8"), y esa asignación todavía no había terminado de
-    correr dentro de xr.js. Resultado: "Uncaught ReferenceError: XR8 is not
-    defined". Por eso esos atributos se agregan por JS (ver src/main.js)
-    recién adentro de XR8Promise.then(), cuando window.XR8 ya está
-    garantizado completo — ahí A-Frame los procesa por el camino normal
-    (atributo agregado → init de componente), sin la carrera.
-    xrconfig="delayRun:true" evita que la cámara arranque sola — hace falta
-    emitir "runreality" a mano para preservar el gesto de usuario del botón
-    "Iniciar AR" (si no, iOS Safari puede negar el permiso de cámara).
-    NO agregamos "xrextras-tap-recenter": recentra el origen del mundo del
-    tracker con cada tap de pantalla (XrController.recenter()), lo cual
-    invalidaría la transformación tracker↔mapa que #map-anchor tiene aplicada
-    (ver src/main.js) sin que haya una nueva localización que la recalcule —
-    el cubo quedaría desalineado hasta la próxima corrección. El único que
-    debe mover el ancla del mapa acá es el VPS, nunca un tap arbitrario.
-    loading-screen="enabled:false": A-Frame trae su propia pantalla de carga
-    (nativa, no de 8th Wall) que tapa todo mientras la escena no termina de
-    inicializar — ya tenemos la nuestra (#landing, #status-text).
-    "xrextras-loading" (el equivalente de 8th Wall) lo sacamos directamente:
-    confirmado en vivo que pone un overlay (#loadImageContainer) que tapa la
-    pantalla desde que carga la página, sin esperar "runreality" — bloqueaba
-    el click al botón "Iniciar AR".
-    "landing-page" (el componente que muestra "Scan or visit ... to
-    continue", branding de 8th Wall) TAMPOCO se agrega — ver src/main.js:
-    ahí hacemos nuestro propio chequeo de compatibilidad
-    (XR8.XrDevice.isDeviceBrowserCompatible) antes de mostrar "Iniciar AR",
-    y si el dispositivo no es compatible mostramos nuestro propio fallback
-    (visor 3D) en vez de la pantalla de 8th Wall.
-  -->
-  <a-scene id="ar-scene" vr-mode-ui="enabled: false" loading-screen="enabled: false">
-    <!--
-      xrweb necesita un <a-camera> explícito en la escena ("You need an
-      <a-camera> element for augmented reality" si no está) — confirmado en
-      vivo. look-controls/wasd-controls desactivados: esos son para
-      mirar/moverse con mouse/teclado en desktop VR, acá la pose de la
-      cámara la maneja el tracking de XR8 (xrweb), no querés que compitan.
-    -->
-    <a-camera look-controls-enabled="false" wasd-controls-enabled="false"></a-camera>
+  <!-- Canvas where XR8 and Three.js will draw the camera and scene -->
+  <canvas id="camerafeed" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
 
-    <!--
-      #map-anchor reemplaza el enfoque anterior (updateCameraProjectionMatrix
-      reseteando todo el origen del mundo de XR8 en cada corrección). Ahora es
-      este entity el que se mueve: src/main.js calcula, para cada localización
-      exitosa, la transformación entre la pose actual del tracker (SLAM nativo,
-      sceneEl.camera.matrixWorld) y la pose que devuelve MultiSet (cámara
-      relativa al origen del mapa), y aplica esa transformación acá — igual que
-      el módulo oficial de Immersal reposiciona su "pointCloud" en vez de tocar
-      la cámara. El tracking de XR8 nunca se resetea; el ancla es lo que se
-      alinea con el mapa real. Todo el contenido de la experiencia (el cubo de
-      prueba, y cualquier cosa que se agregue después) va DENTRO de este
-      entity, en coordenadas del mapa (metros, mismo sistema que MultiSet).
-      visible="false" hasta la primera localización exitosa — antes de eso no
-      hay transformación real que aplicar, solo la identidad, y quedaría
-      "flotando en cualquier lado" (el bug original que motivó ocultarlo).
-    -->
-    <a-entity id="map-anchor" visible="false">
-      <a-entity
-        id="ar-cube"
-        geometry="primitive: box; width: 0.3; height: 0.3; depth: 0.3"
-        material="color: #6366f1; roughness: 0.4"
-        position="0 1.6 -1"
-      ></a-entity>
-    </a-entity>
-  </a-scene>
-
-  <!-- Pantalla inicial -->
+  <!-- Initial screen -->
   <div id="landing">
     <div class="emoji">🧪</div>
-    <h1>XR8 — Motor 8th Wall</h1>
-    <p>Prueba mínima del motor propio de 8th Wall (sin WebXR). Tocá el botón para iniciar y confirmar que el cubo aparece fijo y estable.</p>
-    <button id="btn-start-ar">Iniciar AR</button>
+    <h1>XR8 — 8th Wall Engine</h1>
+    <p>Minimal test of 8th Wall's own engine (no WebXR). Tap the button to start and confirm that the cube appears fixed and stable.</p>
+    <button id="btn-start-ar">Start AR</button>
   </div>
 
   <div id="status-text"></div>
 
-  <!-- Se prende solo cuando MultiSet devuelve poseFound:true — confirmación visible de que reconoció el mapa -->
+  <!-- Turns on only when MultiSet returns poseFound:true — visible confirmation that it recognized the map -->
   <div id="confidence-badge"></div>
 
-  <!-- HUD durante AR: localización manual + pausa de la relocalización automática de fondo (cada N segundos) -->
+  <!-- HUD during AR: manual localization + pause of automatic background relocalization (every N seconds) -->
   <div id="hud">
-    <button id="btn-localize">📍 Localizar</button>
+    <button id="btn-localize">📍 Localize</button>
     <div id="cube-scale-container">
-      <label for="cube-scale-slider">Escala del Cubo</label>
+      <label for="cube-scale-slider">Cube Scale</label>
       <input type="range" id="cube-scale-slider" min="0.1" max="5.0" step="0.1" value="1" />
     </div>
   </div>
 
   <!--
-    Botón de TESTEO: alterna manualmente entre la vista de cámara/AR y el
-    visor 3D de respaldo, sin depender de que el fallback automático se
-    dispare. A diferencia de triggerFallback() (que pausa XR8 y suelta la
-    cámara para siempre, porque reanudar una sesión ya pausada no es
-    confiable — ver comentario junto a btnFallbackBack), este toggle NO
-    toca el motor XR8 ni la cámara: solo cambia qué contenedor está visible.
-    Así es instantáneo y reversible las veces que haga falta, útil para
-    comparar a ojo cómo se vería el cubo en el visor 3D vs. si aparece (o
-    no) en la vista de cámara real, sin tener que recargar la página entre
-    intento e intento. Se oculta solo si el fallback automático se dispara
-    de verdad (ahí sí no hay cámara viva a la que volver).
+    TEST button: manually toggles between the camera/AR view and the
+    3D fallback viewer, without depending on the automatic fallback
+    triggering. Unlike triggerFallback() (which pauses XR8 and releases
+    the camera permanently, because resuming an already-paused session
+    isn't reliable — see comment next to btnFallbackBack), this toggle
+    does NOT touch the XR8 engine or the camera: it only changes which
+    container is visible. This makes it instant and reversible as many
+    times as needed, useful for visually comparing how the cube would
+    look in the 3D viewer vs. whether it appears (or not) in the real
+    camera view, without having to reload the page between attempts.
+    It's hidden only if the automatic fallback truly fires (at that
+    point there's no live camera to go back to).
   -->
-  <button id="btn-debug-toggle-view" style="display: none;">🧪 Ver visor 3D</button>
+  <button id="btn-debug-toggle-view" style="display: none;">🧪 View 3D viewer</button>
 
   <!--
-    Fallback: se muestra por dos motivos distintos (ver triggerFallback() en
-    src/main.js) — dispositivo/navegador no compatible (chequeo previo,
-    antes de arrancar la cámara) o GPU insuficiente para el SLAM (error de
-    WebGL detectado ya en sesión). El texto queda genérico para cubrir
-    ambos casos sin ser específico de uno solo.
+    Fallback: shown for two distinct reasons (see triggerFallback() in
+    src/main.js) — incompatible device/browser (pre-check, before
+    starting the camera) or insufficient GPU for SLAM (WebGL error
+    detected during session). The text is kept generic to cover both
+    cases without being specific to just one.
   -->
   <div id="fallback-viewer">
     <div class="emoji">⚠️</div>
-    <h1>AR no disponible en este dispositivo</h1>
-    <p>Tu dispositivo o navegador no puede correr esta experiencia de AR de forma estable. Te mostramos el contenido en una vista 3D en su lugar.</p>
+    <h1>AR not available on this device</h1>
+    <p>Your device or browser cannot run this AR experience stably. We're showing the content in a 3D view instead.</p>
     <canvas id="fallback-canvas"></canvas>
-    <button id="btn-fallback-back">Volver</button>
+    <button id="btn-fallback-back">Back</button>
   </div>
 
   <!--
-    Motor 8th Wall: script clásico (no ESM) que setea window.XR8 y dispara
-    "xrloaded". Los archivos vienen de node_modules/@8thwall/engine-binary/dist,
-    copiados a public/xr8/ por scripts/copy-xr8-assets.mjs (ver postinstall).
-    data-preload-chunks="slam" precarga el tracking de mundo (no necesitamos "face").
-    Se carga async: puede resolver antes o después de que corra src/main.js,
-    por eso ahí esperamos el evento "xrloaded"/XR8Promise en vez de asumir orden.
+    8th Wall engine: classic script (not ESM) that sets window.XR8 and
+    fires "xrloaded". The files come from
+    node_modules/@8thwall/engine-binary/dist, copied to public/xr8/ by
+    scripts/copy-xr8-assets.mjs (see postinstall).
+    data-preload-chunks="slam" preloads world tracking (we don't need
+    "face"). Loaded async: it may resolve before or after src/main.js
+    runs, so there we wait for the "xrloaded"/XR8Promise event instead
+    of assuming order.
   -->
   <script src="/xr8/xr.js" async data-preload-chunks="slam"></script>
 
   <!--
-    XRExtras: sin "async", carga y ejecuta ANTES de que corra el
-    <script type="module"> de abajo (los módulos son deferred). Así
-    window.XRExtras ya existe cuando src/main.js arma los atributos de
-    <a-scene>. XRExtras.RuntimeError: si algo tira una excepción dentro del
-    pipeline, la muestra en pantalla en vez de fallar mudo (clave para
-    debuggear en un celular sin acceso a la consola).
-    (Ya no cargamos landing-page.js: era el único uso que le dábamos a ese
-    paquete, y lo sacamos — ver comentario junto a <a-scene> más arriba.)
+    XRExtras: without "async", loads and executes BEFORE the
+    <script type="module"> below runs (modules are deferred). This way
+    window.XRExtras already exists when src/main.js sets up the
+    <a-scene> attributes. XRExtras.RuntimeError: if something throws
+    an exception inside the pipeline, it shows it on screen instead of
+    failing silently (crucial for debugging on a phone without console
+    access).
+    (We no longer load landing-page.js: it was the only use we had for
+    that package, and we removed it — see comment next to <a-scene>
+    above.)
   -->
   <script src="/xrextras/xrextras.js"></script>
 

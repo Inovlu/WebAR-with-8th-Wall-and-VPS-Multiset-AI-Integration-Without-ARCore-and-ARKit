@@ -2,20 +2,20 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   server: {
-    // Expone el servidor en la red local → celular/tablet pueden acceder
+    // Expose the server on the local network → phone/tablet can access
     host: '0.0.0.0',
-    port: 3001, // distinto al del proyecto hermano (3000) para poder correr ambos a la vez
+    port: 3001, // different from the sibling project (3000) to run both at once
 
-    // Servidor local en HTTP plano a propósito: el contexto seguro que exige
-    // getUserMedia lo aporta ngrok (su URL pública es https), no hace falta
-    // (ni conviene) un certificado self-signed local — ngrok no puede
-    // tunelear http hacia un origen que espera TLS.
-    // Para probar por IP de LAN sin ngrok, un https local sí sería necesario
-    // de nuevo (@vitejs/plugin-basic-ssl), pero no es el flujo actual.
+    // Local server in plain HTTP on purpose: the secure context required
+    // by getUserMedia is provided by ngrok (its public URL is https), no
+    // need for (nor is it advisable to use) a self-signed local cert —
+    // ngrok can't tunnel http to an origin that expects TLS.
+    // To test via LAN IP without ngrok, a local https WOULD be needed
+    // again (@vitejs/plugin-basic-ssl), but that's not the current flow.
 
-    // Dominios de ngrok permitidos, para probar en el celular sin desplegar
+    // Allowed ngrok domains, for testing on the phone without deploying
     allowedHosts: ['.ngrok-free.app', '.ngrok-free.dev', '.ngrok.dev', '.ngrok.io'],
   },
-  // Permite que Vite procese las variables VITE_* del .env
+  // Allow Vite to process VITE_* variables from .env
   envPrefix: 'VITE_',
 });

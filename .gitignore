@@ -5,3 +5,9 @@ dist/
 public/xr8/
 public/xrextras/
 public/aframe/
+
+# Local IDE / AI assistant config
+.claude/
+
+# Personal notes (may contain credentials)
+notas.txt

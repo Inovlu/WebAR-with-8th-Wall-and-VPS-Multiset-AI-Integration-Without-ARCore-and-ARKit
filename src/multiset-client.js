@@ -1,19 +1,19 @@
-// Puente REST con MultiSet — Fase 2.
+// REST bridge with MultiSet — Phase 2.
 //
-// A propósito NO usamos @multisetai/vps (ni MultisetClient/XRSessionManager/
-// ThreeAdapter): XRSessionManager y ThreeAdapter están atados a navigator.xr
-// (WebXR) y a un render loop de Three.js — incompatibles con el motor propio
-// de 8th Wall (XR8) que maneja el tracking acá. MultisetClient en sí no tiene
-// esa dependencia (es un cliente HTTP puro), pero igual preferimos fetch()
-// directo: control total sobre el payload exacto que espera el REST y sobre
-// el modo mock de abajo.
+// We deliberately do NOT use @multisetai/vps (nor MultisetClient/
+// XRSessionManager/ThreeAdapter): XRSessionManager and ThreeAdapter are
+// tied to navigator.xr (WebXR) and a Three.js render loop — incompatible
+// with 8th Wall's own engine (XR8) that handles tracking here.
+// MultisetClient itself doesn't have that dependency (it's a pure HTTP
+// client), but we still prefer direct fetch(): total control over the
+// exact payload the REST API expects and over the mock mode below.
 //
-// Aislado en su propio módulo a propósito: el REST directo (a diferencia del
-// SDK de WebXR) puede necesitar que el equipo de MultiSet apruebe el dominio
-// manualmente (CORS). Mientras eso no esté resuelto, VITE_MULTISET_MOCK=true
-// hace que este módulo devuelva una pose falsa sin tocar la red, para no
-// bloquear el resto del desarrollo (captura de frame, transformación del
-// map-anchor, etc — ver src/main.js).
+// Isolated in its own module on purpose: the direct REST approach (as
+// opposed to the WebXR SDK) may require MultiSet's team to manually
+// approve the domain (CORS). While that's unresolved,
+// VITE_MULTISET_MOCK=true makes this module return a fake pose without
+// hitting the network, so it doesn't block the rest of the development
+// (frame capture, map-anchor transformation, etc. — see src/main.js).
 
 const API_BASE = 'https://api.multiset.ai/v1';
 
@@ -23,21 +23,22 @@ const MAP_CODE      = import.meta.env.VITE_MAP_CODE;
 const MOCK_ENABLED  = import.meta.env.VITE_MULTISET_MOCK === 'true';
 const ENV_LATITUDE  = import.meta.env.VITE_MAP_LATITUDE;
 const ENV_LONGITUDE = import.meta.env.VITE_MAP_LONGITUDE;
-// "vps-1" (estándar) o "vps-2" (búsqueda profunda, más lenta/costosa) — ver
-// doc de /vps/map/query-form. Configurable por si un mapa necesita vps-2
-// para relocalizar bien, sin tener que tocar código.
+// "vps-1" (standard) or "vps-2" (deep search, slower/more expensive) —
+// see /vps/map/query-form docs. Configurable so a specific map can use
+// vps-2 for better relocalization without touching code.
 const QUERY_MODE = import.meta.env.VITE_MULTISET_QUERY_MODE || 'vps-1';
-// Alternativa vía .env en vez de reemplazar el flujo de single-image: cuando
-// está en "true", captureAndLocalize() en main.js llama a
-// queryMultiImageLocalization() (/vps/map/multi-image-query) en vez de
-// queryLocalization() (/vps/map/query-form) — el resto del flujo (umbral de
-// confianza, suavizado, relocalización de fondo) no se entera de cuál se usó,
-// porque las dos devuelven el mismo shape {position, rotation, confidence}.
+// Alternative via .env instead of replacing the single-image flow: when
+// set to "true", captureAndLocalize() in main.js calls
+// queryMultiImageLocalization() (/vps/map/multi-image-query) instead of
+// queryLocalization() (/vps/map/query-form) — the rest of the flow
+// (confidence threshold, smoothing, background relocalization) doesn't
+// care which one was used, because both return the same shape
+// {position, rotation, confidence}.
 const MULTI_IMAGE_ENABLED = import.meta.env.VITE_MULTISET_USE_MULTI_IMAGE === 'true';
 
-// ─── Autenticación M2M ──────────────────────────────────────────────────────
-// POST /m2m/token con Basic auth (base64 clientId:clientSecret) → { token,
-// expiresOn }. El token dura 30 min; lo cacheamos y renovamos con margen.
+// ─── M2M Authentication ─────────────────────────────────────────────────────
+// POST /m2m/token with Basic auth (base64 clientId:clientSecret) → { token,
+// expiresOn }. The token lasts 30 min; we cache and renew with margin.
 let cachedToken = null;
 let cachedTokenExpiresAt = 0; // epoch ms
 
@@ -49,12 +50,13 @@ async function getToken() {
 
   const authorization = 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
 
-  // Body con {clientId, clientSecret}: así lo pide explícitamente la doc
-  // oficial (docs.multiset.ai/multiset/basics/rest-api-docs/authentication).
-  // El bundle del SDK (@multisetai/vps) manda el body vacío ("{}") y también
-  // funciona — sospechamos que el server ignora el body si las credenciales
-  // ya vienen bien en el header Basic — pero ante la duda seguimos la doc
-  // escrita al pie de la letra en vez de una inferencia sacada de un bundle.
+  // Body with {clientId, clientSecret}: explicitly required by the
+  // official docs (docs.multiset.ai/multiset/basics/rest-api-docs/
+  // authentication). The SDK bundle (@multisetai/vps) sends an empty
+  // body ("{}") and also works — we suspect the server ignores the body
+  // if the credentials are already correct in the Basic header — but
+  // we follow the written docs to the letter rather than an inference
+  // drawn from a bundle.
   const response = await fetch(`${API_BASE}/m2m/token`, {
     method: 'POST',
     headers: {
@@ -65,77 +67,81 @@ async function getToken() {
   });
 
   if (!response.ok) {
-    throw new Error(`MultiSet auth falló: ${response.status} ${await response.text()}`);
+    throw new Error(`MultiSet auth failed: ${response.status} ${await response.text()}`);
   }
 
   const data = await response.json();
   if (data.error) throw new Error(`MultiSet auth error: ${data.error}`);
 
-  // El SDK oficial acepta tanto "token" como "access_token" en la respuesta
-  // — replicamos ese fallback por las dudas de que el server responda con
-  // uno u otro según versión.
+  // The official SDK accepts both "token" and "access_token" in the
+  // response — we replicate that fallback in case the server responds
+  // with one or the other depending on version.
   cachedToken = data.token ?? data.access_token;
-  // Margen de 60s antes de la expiración real para no usar un token vencido
-  // por una request que arranca justo en el límite.
+  // 60s margin before actual expiration to avoid using a token that
+  // expired while a request was in flight.
   cachedTokenExpiresAt = now + 30 * 60 * 1000 - 60 * 1000;
 
   return cachedToken;
 }
 
-// ─── Localización (Map Query) ──────────────────────────────────────────────
-// Historial: esto pasó por dos endpoints equivocados antes de llegar acá.
-// Primero /vps/map/query (JSON) con width/height sueltos → 400 "resolution
-// is required". Después, adentro de esa misma familia de endpoints, se
-// intentó "arreglar" mandando un objeto anidado "resolution" al mismo
-// endpoint JSON — pero consultando directo con soporte de MultiSet (y su
-// comunidad) se confirmó que el JSON singular (/vps/map/query) NO es la vía
-// recomendada para web: la integración real es contra /vps/map/query-form
-// (multipart/form-data, UN solo frame). Ahí los campos SÍ van sueltos
-// (width/height/px/py/fx/fy como partes de form-data, no anidados en nada) —
-// o sea que el primer intento tenía la forma del payload bien, pero apuntaba
-// al endpoint que no es.
+// ─── Localization (Map Query) ──────────────────────────────────────────────
+// History: this went through two wrong endpoints before landing here.
+// First /vps/map/query (JSON) with loose width/height → 400 "resolution
+// is required". Then, within that same endpoint family, we tried
+// "fixing" it by sending a nested "resolution" object to the same JSON
+// endpoint — but checking directly with MultiSet support (and their
+// community) confirmed that the singular JSON endpoint (/vps/map/query)
+// is NOT the recommended path for web: the real integration uses
+// /vps/map/query-form (multipart/form-data, ONE single frame). There
+// the fields DO go loose (width/height/px/py/fx/fy as form-data parts,
+// not nested in anything) — meaning the first attempt had the payload
+// shape right but was hitting the wrong endpoint.
 //
-// Devuelve null si no hay pose (poseFound: false), nunca tira excepción por
-// eso — sí tira si falla la red/auth, para que el caller distinga "no se
-// pudo localizar en este frame" (normal, va a pasar seguido) de "algo está
-// roto" (falta de credenciales, CORS, etc).
+// Returns null if there's no pose (poseFound: false), never throws for
+// that — it DOES throw on network/auth failures, so the caller can
+// distinguish "couldn't localize in this frame" (normal, will happen
+// often) from "something is broken" (missing credentials, CORS, etc.).
 //
-// multipart/form-data: el Content-Type con boundary lo arma el browser solo
-// a partir del objeto FormData — si lo seteamos a mano acá, el server no
-// puede parsear el body (falta el boundary). Por eso NO va 'Content-Type' en
-// headers, a diferencia de getToken()/getMapLocation() que sí son JSON.
+// multipart/form-data: the Content-Type with boundary is set
+// automatically by the browser from the FormData object — if we set it
+// manually here, the server can't parse the body (missing boundary).
+// That's why there's NO 'Content-Type' in headers, unlike
+// getToken()/getMapLocation() which are JSON.
 //
-// "queryImage" viaja como JPEG binario (Blob), no como base64: desde que
-// migramos la captura de frame a CameraPixelArray (ver
-// diagnosticsPipelineModule/captureImageFrame en main.js), lo que tenemos es
-// un ArrayBuffer JPEG a color, ya no un data URL base64 de
-// XR8.CanvasScreenshot ni el PNG en escala de grises de una vuelta anterior
-// (2026-07-24: se volvió a JPEG color, downsample a 1280px, calidad 0.7 —
-// copiado 1:1 del SDK WebXR de referencia, @multisetai/vps/dist/three/
-// index.js función ne(), que es el que mejor viene reconociendo contra
-// MultiSet). Nombre de campo CONFIRMADO (ya no es una suposición): verificado
-// línea por línea contra el bundle de @multisetai/vps (queryLocalization()
-// del SDK oficial arma el mismo FormData con "queryImage", "mapCode",
-// "isRightHanded", "fx"/"fy"/"px"/"py", "width"/"height", "hintPosition" —
-// idéntico a lo que mandamos acá, incluido el mismo formato de imagen).
+// "queryImage" is sent as binary JPEG (Blob), not base64: since we
+// migrated frame capture to CameraPixelArray (see
+// diagnosticsPipelineModule/captureImageFrame in main.js), what we have
+// is a color JPEG ArrayBuffer, no longer a base64 data URL from
+// XR8.CanvasScreenshot nor the grayscale PNG from a previous iteration
+// (2026-07-24: switched back to color JPEG, downsampled to 1280px,
+// quality 0.7 — copied 1:1 from the reference WebXR SDK,
+// @multisetai/vps/dist/three/index.js function ne(), which has been
+// the one with the best recognition against MultiSet). Field name
+// CONFIRMED (no longer an assumption): verified line by line against
+// the @multisetai/vps bundle (queryLocalization() in the official SDK
+// builds the same FormData with "queryImage", "mapCode",
+// "isRightHanded", "fx"/"fy"/"px"/"py", "width"/"height",
+// "hintPosition" — identical to what we send here, including the same
+// image format).
 //
-// "isRightHanded: true" se manda a propósito para que la pose vuelva en el
-// mismo sistema que usa THREE.js/A-Frame (WebGL, RHS) para componer la
-// matriz cloudSpace en main.js, en vez del left-handed (estilo Unity) que la
-// API devuelve por default.
+// "isRightHanded: true" is sent on purpose so the pose comes back in
+// the same coordinate system that THREE.js/A-Frame uses (WebGL, RHS)
+// for composing the cloudSpace matrix in main.js, instead of the
+// left-handed system (Unity-style) the API returns by default.
 //
-// "hintPosition" es opcional: si se pasa (última pose conocida), acelera y
-// mejora la relocalización siguiente. Formato confirmado contra un ejemplo
-// real de la doc: string "x,y,z" (sin corchetes), en LHS (Unity) — el mismo
-// sistema que devuelve la API cuando isRightHanded=false — así que el
-// caller (main.js) es responsable de convertir antes de pasarlo acá, dado
-// que nosotros pedimos isRightHanded=true (RHS) para el resto del pipeline.
-// A propósito NO mandamos hintFloorHeight (indicación explícita: en este
-// mapa no ayuda y puede restringir de más la búsqueda).
+// "hintPosition" is optional: if passed (last known pose), it speeds
+// up and improves the next relocalization. Format confirmed against a
+// real doc example: string "x,y,z" (no brackets), in LHS (Unity) —
+// the same system the API returns when isRightHanded=false — so the
+// caller (main.js) is responsible for converting before passing it
+// here, since we request isRightHanded=true (RHS) for the rest of
+// the pipeline. We deliberately do NOT send hintFloorHeight (explicit
+// guidance: on this map it doesn't help and may over-constrain the
+// search).
 async function queryLocalization(jpegBuffer, cameraIntrinsics, resolution, hintPosition) {
   if (MOCK_ENABLED) return mockLocalization();
 
-  const token = await getToken();
+  let token = await getToken();
 
   const formData = new FormData();
   formData.append('queryImage', new Blob([jpegBuffer], { type: 'image/jpeg' }), 'frame.jpg');
@@ -150,14 +156,25 @@ async function queryLocalization(jpegBuffer, cameraIntrinsics, resolution, hintP
   formData.append('queryMode', QUERY_MODE);
   if (hintPosition) formData.append('hintPosition', hintPosition);
 
-  const response = await fetch(`${API_BASE}/vps/map/query-form`, {
+  let response = await fetch(`${API_BASE}/vps/map/query-form`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
+  if (response.status === 401) {
+    console.warn('MultiSet 401: Token expired or invalid. Retrying...');
+    cachedToken = null;
+    token = await getToken();
+    response = await fetch(`${API_BASE}/vps/map/query-form`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+  }
+
   if (!response.ok) {
-    throw new Error(`MultiSet map/query-form falló: ${response.status} ${await response.text()}`);
+    throw new Error(`MultiSet map/query-form failed: ${response.status} ${await response.text()}`);
   }
 
   const data = await response.json();
@@ -170,45 +187,46 @@ async function queryLocalization(jpegBuffer, cameraIntrinsics, resolution, hintP
   };
 }
 
-// ─── Localización (Multi Image Query) ──────────────────────────────────────
-// POST /vps/map/multi-image-query — variante de la localización que manda
-// varias fotos en un solo request en vez de una. Confirmado contra el schema
-// OpenAPI real de la doc (la sección renderizada, no un resumen): la doc en
-// texto dice "mínimo 4, hasta 6 imágenes", pero el schema real solo define
-// image1 (Required) + image2/image3/image4 (Optional) — NO hay image5 ni
-// image6 en la especificación. Implementado con hasta 4 en vez de 6 por eso:
-// es lo que el server efectivamente valida, más allá de lo que diga el texto.
+// ─── Localization (Multi Image Query) ──────────────────────────────────────
+// POST /vps/map/multi-image-query — variant of localization that sends
+// multiple photos in a single request instead of one. Confirmed against
+// the real OpenAPI schema in the docs (the rendered section, not a
+// summary): the text says "minimum 4, up to 6 images", but the actual
+// schema only defines image1 (Required) + image2/image3/image4
+// (Optional) — there is NO image5 or image6 in the specification.
+// Implemented with up to 4 instead of 6 for that reason: it's what the
+// server actually validates, regardless of what the text says.
 //
-// Campos por imagen: "imageN" (el archivo, binario) + "imageN_data" (string
-// JSON opcional con la pose LOCAL de tracking — SLAM propio del dispositivo,
-// no la respuesta de MultiSet — en el momento exacto en que se capturó esa
-// imagen puntual). Formato de imageN_data confirmado con el ejemplo textual
-// de la doc: {"x","y","z","qx","qy","qz","qw"} — OJO que la rotación acá usa
-// prefijo "q" (qx/qy/qz/qw), a diferencia de la respuesta de localización
-// que usa x/y/z/w sin prefijo. Mismos campos width/height/px/py/fx/fy/
-// mapCode/isRightHanded/queryMode/hintPosition que el single-image.
+// Fields per image: "imageN" (the file, binary) + "imageN_data"
+// (optional JSON string with the LOCAL tracking pose — the device's own
+// SLAM, not MultiSet's response — at the exact moment that particular
+// image was captured). imageN_data format confirmed with the doc's text
+// example: {"x","y","z","qx","qy","qz","qw"} — NOTE that the rotation
+// here uses "q" prefix (qx/qy/qz/qw), unlike the localization response
+// which uses x/y/z/w without prefix. Same fields width/height/px/py/
+// fx/fy/mapCode/isRightHanded/queryMode/hintPosition as single-image.
 //
-// Shape de retorno IDÉNTICO a queryLocalization() a propósito ({position,
-// rotation, confidence}) — así el resto de main.js (umbral de confianza,
-// suavizado, relocalización de fondo) no necesita saber cuál de las dos se
-// usó. La respuesta cruda de este endpoint viene anidada distinto
-// (estimatedPose.position/estimatedPose.rotation, no position/rotation
-// sueltos) — la aplanamos acá adentro para que el contrato hacia afuera sea
-// el mismo.
+// Return shape is INTENTIONALLY identical to queryLocalization()
+// ({position, rotation, confidence}) — so the rest of main.js
+// (confidence threshold, smoothing, background relocalization) doesn't
+// need to know which one was used. The raw response from this endpoint
+// comes nested differently (estimatedPose.position/estimatedPose.rotation,
+// not loose position/rotation) — we flatten it here so the contract to
+// the outside is the same.
 //
-// "images": array de hasta 4 items { jpegBuffer, localPose } — localPose es
-// {x,y,z,qx,qy,qz,qw} o null/undefined si todavía no hay tracking local
-// confiable en ese momento (el campo es opcional, se omite en vez de mandar
-// ceros inventados).
+// "images": array of up to 4 items { jpegBuffer, localPose } —
+// localPose is {x,y,z,qx,qy,qz,qw} or null/undefined if there's no
+// reliable local tracking at that moment (the field is optional; we
+// omit it rather than sending invented zeros).
 async function queryMultiImageLocalization(images, cameraIntrinsics, resolution, hintPosition) {
   if (MOCK_ENABLED) return mockLocalization();
 
   if (!images?.length) {
-    throw new Error('queryMultiImageLocalization necesita al menos 1 imagen.');
+    throw new Error('queryMultiImageLocalization requires at least 1 image.');
   }
-  const clamped = images.slice(0, 4); // el schema real no soporta más de 4 (image1..image4)
+  const clamped = images.slice(0, 4); // the real schema only supports up to 4 (image1..image4)
 
-  const token = await getToken();
+  let token = await getToken();
 
   const formData = new FormData();
   formData.append('mapCode', MAP_CODE);
@@ -228,25 +246,36 @@ async function queryMultiImageLocalization(images, cameraIntrinsics, resolution,
     if (localPose) formData.append(`image${n}_data`, JSON.stringify(localPose));
   });
 
-  const response = await fetch(`${API_BASE}/vps/map/multi-image-query`, {
+  let response = await fetch(`${API_BASE}/vps/map/multi-image-query`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   });
 
+  if (response.status === 401) {
+    console.warn('MultiSet 401: Token expired or invalid. Retrying...');
+    cachedToken = null;
+    token = await getToken();
+    response = await fetch(`${API_BASE}/vps/map/multi-image-query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+  }
+
   if (!response.ok) {
-    throw new Error(`MultiSet multi-image-query falló: ${response.status} ${await response.text()}`);
+    throw new Error(`MultiSet multi-image-query failed: ${response.status} ${await response.text()}`);
   }
 
   const data = await response.json();
   if (!data.poseFound) return null;
 
-  // "estimatedPose" es la pose corregida a devolver (análogo al
-  // position/rotation suelto del single-image); "trackingPose" no lo usamos
-  // — no está 100% confirmado qué representa exactamente (la doc la lista
-  // sin desarrollar sus propiedades), pero por nombre y por paralelismo con
-  // trackingPipeline suena a un eco/ajuste de la pose de tracking de entrada,
-  // no la corrección final.
+  // "estimatedPose" is the corrected pose to return (analogous to the
+  // loose position/rotation from single-image); "trackingPose" is not
+  // used — it's not 100% confirmed what it represents exactly (the
+  // docs list it without describing its properties), but by name and
+  // by parallel with trackingPipeline it sounds like an echo/adjustment
+  // of the input tracking pose, not the final correction.
   return {
     position: data.estimatedPose?.position,
     rotation: data.estimatedPose?.rotation,
@@ -254,11 +283,11 @@ async function queryMultiImageLocalization(images, cameraIntrinsics, resolution,
   };
 }
 
-// Pose fija de ejemplo — solo para poder probar el resto del pipeline
-// (captura de frame → anclaje de #map-anchor en main.js) sin depender de que
-// MultiSet ya tenga el dominio de ngrok aprobado por CORS.
+// Fixed example pose — only to test the rest of the pipeline (frame
+// capture → #map-anchor anchoring in main.js) without depending on
+// MultiSet having the ngrok domain approved for CORS.
 function mockLocalization() {
-  console.log('🧪 [mock] MultiSet devolviendo pose simulada');
+  console.log('🧪 [mock] MultiSet returning simulated pose');
   return Promise.resolve({
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0, z: 0, w: 1 },
@@ -266,29 +295,31 @@ function mockLocalization() {
   });
 }
 
-// ─── Ubicación georeferenciada del mapa ────────────────────────────────────
-// GET /vps/map/{mapCode} devuelve metadata del mapa, incluyendo la ubicación
-// donde se georeferenció (dashboard o POST /vps/map/{mapCode}/georeference,
-// ver scripts/georeference-map.mjs). Esta es la fuente de verdad — no hay una
-// convención de .env para esto en la doc de MultiSet.
+// ─── Georeferenced map location ────────────────────────────────────────────
+// GET /vps/map/{mapCode} returns map metadata, including the location
+// where it was georeferenced (dashboard or POST /vps/map/{mapCode}/
+// georeference, see scripts/georeference-map.mjs). This is the source
+// of truth — there's no .env convention for this in the MultiSet docs.
 //
-// CORRECCIÓN (2026-07-22): asumíamos (por la doc de "Geo Reference panel",
-// que habla de un GeoJSON Point) que este campo venía como
-// "location.coordinates" = [longitud, latitud, altitud]. Confirmado contra
-// una respuesta real de la API después de correr georeference-map.mjs con
-// éxito (horizontalRmseMeters: 0.006): el campo real es "coordinates", un
-// objeto plano {latitude, longitude, altitude} — no location.coordinates. Con
-// el nombre viejo, el código nunca encontraba la ubicación aunque el mapa ya
-// estuviera georeferenciado del lado del servidor, y caía siempre al fallback
-// de abajo sin darse cuenta del error.
+// FIX (2026-07-22): we assumed (from the "Geo Reference panel" docs,
+// which mention a GeoJSON Point) that this field came as
+// "location.coordinates" = [longitude, latitude, altitude]. Confirmed
+// against a real API response after running georeference-map.mjs
+// successfully (horizontalRmseMeters: 0.006): the actual field is
+// "coordinates", a flat object {latitude, longitude, altitude} — not
+// location.coordinates. With the old name, the code never found the
+// location even though the map was already georeferenced server-side,
+// and always fell through to the fallback below without realizing the
+// error.
 //
-// Fallback: si el mapa todavía no fue georeferenciado (coordinates ausente),
-// usamos VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE como respaldo manual en vez de
-// dejar el chequeo de proximidad inútil. Es un parche local, no lo que dice
-// la doc — apenas georeferencies el mapa, este fallback deja de usarse solo
-// (la API empieza a devolver coordinates).
+// Fallback: if the map hasn't been georeferenced yet (coordinates
+// absent), we use VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE as a manual
+// fallback instead of leaving the proximity check useless. This is a
+// local workaround, not what the docs say — as soon as you
+// georeference the map, this fallback stops being used on its own
+// (the API starts returning coordinates).
 //
-// Se cachea: la ubicación de un mapa no cambia entre requests.
+// Cached: a map's location doesn't change between requests.
 let cachedMapLocation = null;
 const FORCE_ENV_LOCATION = import.meta.env.VITE_FORCE_ENV_LOCATION === 'true';
 
@@ -296,7 +327,7 @@ async function getMapLocation() {
   if (cachedMapLocation) return cachedMapLocation;
 
   if (FORCE_ENV_LOCATION && ENV_LATITUDE && ENV_LONGITUDE) {
-    console.log('MultiSet: Forzando coordenadas manuales de .env (VITE_FORCE_ENV_LOCATION=true)');
+    console.log('MultiSet: Forcing manual coordinates from .env (VITE_FORCE_ENV_LOCATION=true)');
     cachedMapLocation = { lat: Number(ENV_LATITUDE), lon: Number(ENV_LONGITUDE) };
     return cachedMapLocation;
   }
@@ -309,7 +340,7 @@ async function getMapLocation() {
   });
 
   if (!response.ok) {
-    throw new Error(`MultiSet map details falló: ${response.status} ${await response.text()}`);
+    throw new Error(`MultiSet map details failed: ${response.status} ${await response.text()}`);
   }
 
   const data = await response.json();
@@ -321,12 +352,12 @@ async function getMapLocation() {
   }
 
   if (ENV_LATITUDE && ENV_LONGITUDE) {
-    console.warn('MultiSet: el mapa no está georeferenciado en el dashboard, usando VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE como fallback.');
+    console.warn('MultiSet: map is not georeferenced in the dashboard, using VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE as fallback.');
     cachedMapLocation = { lat: Number(ENV_LATITUDE), lon: Number(ENV_LONGITUDE) };
     return cachedMapLocation;
   }
 
-  throw new Error('El mapa no tiene ubicación georeferenciada (ni location de la API ni VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE en .env).');
+  throw new Error('Map has no georeferenced location (neither API coordinates nor VITE_MAP_LATITUDE/VITE_MAP_LONGITUDE in .env).');
 }
 
 export { getToken, queryLocalization, queryMultiImageLocalization, getMapLocation, MOCK_ENABLED, MULTI_IMAGE_ENABLED };
